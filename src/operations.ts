@@ -16,6 +16,15 @@ type Context = { steps: string[]; dispatched: boolean; confirmed: boolean; warni
 export type BackendFactory = (c: Connection, password: string) => Backend;
 const writes = new Set(['create_program', 'update_source', 'activate_objects']);
 const recoverableSessionErrors = new Set(['AUTH_FAILED', 'CSRF_FAILED', 'HTTP_FORBIDDEN', 'ADT_ERROR', 'OUTCOME_UNKNOWN']);
+const cachedResultLimit = 32 * 1024;
+function cacheResult(result: Result): Result {
+  const compact: Result = JSON.parse(JSON.stringify(result, (key, value) => key === 'source' ? undefined : value));
+  if (Buffer.byteLength(JSON.stringify(compact), 'utf8') <= cachedResultLimit) return compact;
+  return { operation_id: result.operation_id, status: result.status, completed_steps: result.completed_steps,
+    outcome: result.outcome, write_dispatched: result.write_dispatched,
+    error: result.error ? { code: result.error.code, message: result.error.message.slice(0, 2048) } : undefined,
+    warnings: [...(result.warnings ?? []), 'CACHED_DETAILS_OMITTED'] };
+}
 
 export class Operations {
   private sessions = new Map<string, Backend>();
@@ -25,7 +34,7 @@ export class Operations {
   private poisoned = new Set<Backend>();
   private closing = false;
   constructor(private store: ConfigStore, private credentials: Credentials, private audit = new AuditLog(),
-    private factory: BackendFactory = (c, p) => new AdtBackend(c, p)) {}
+    private factory: BackendFactory = (c, p) => new AdtBackend(c, p), private cacheEntryLimit = 512) {}
   async run(tool: string, input: Input): Promise<Result> {
     if (this.closing) throw new AppError('SERVER_STOPPING', 'Server is stopping');
     if (this.pending >= 100) throw new AppError('BUSY', 'Too many pending operations');
@@ -37,9 +46,9 @@ export class Operations {
         if (existing.hash !== hash) throw new AppError('REQUEST_ID_CONFLICT', 'Request ID was already used with different parameters');
         return existing.result;
       }
-      if (this.requests.size >= 10000) throw new AppError('REQUEST_LIMIT', 'Request index is full; restart after confirming pending operations');
+      if (this.requests.size >= this.cacheEntryLimit) throw new AppError('REQUEST_LIMIT', 'Request cache is full; confirm pending operations before restarting');
       const result = this.enqueue(tool, input);
-      this.requests.set(key, { hash, result });
+      this.requests.set(key, { hash, result: result.then(cacheResult) });
       return result;
     }
     return this.enqueue(tool, input);

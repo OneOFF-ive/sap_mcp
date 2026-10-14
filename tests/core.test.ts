@@ -170,7 +170,9 @@ test('concurrent duplicate updates save once, unlock and log no source or handle
     const args = { connection_id: f.connection.connection_id, source_uri: source, source: 'REPORT ztest.\nWRITE 1.',
       expected_revision: original.revision, request_id: 'one' };
     const [a, b] = await Promise.all([f.operations.run('update_source', args), f.operations.run('update_source', args)]);
-    assert.deepEqual(a, b); assert.equal(a.status, 'success'); assert.equal(f.backend.saves, 1); assert.equal(f.backend.unlocks, 1);
+    assert.equal(a.operation_id, b.operation_id); assert.equal(b.status, 'success');
+    assert.equal((b.data as { source?: string }).source, undefined);
+    assert.equal(a.status, 'success'); assert.equal(f.backend.saves, 1); assert.equal(f.backend.unlocks, 1);
     const text = await readFile(join(f.logDirectory, (await readdir(f.logDirectory))[0]), 'utf8');
     assert.ok(text.trim().split('\n').every(line => JSON.parse(line).operation_id));
     assert.equal(text.includes(args.source), false); assert.equal(text.includes('private-lock-handle'), false);
@@ -219,7 +221,8 @@ test('unknown write results are not retried, and locks are released', async () =
     const args = { connection_id: f.connection.connection_id, source_uri: source,
       source: 'REPORT ztest. WRITE 3.', expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'timeout' };
     const a = await f.operations.run('update_source', args); const b = await f.operations.run('update_source', args);
-    assert.equal(a.outcome, 'unknown'); assert.equal(a.error?.code, 'OUTCOME_UNKNOWN'); assert.deepEqual(a, b);
+    assert.equal(a.outcome, 'unknown'); assert.equal(a.error?.code, 'OUTCOME_UNKNOWN');
+    assert.equal(JSON.stringify(a), JSON.stringify(b));
     assert.equal(f.backend.saves, 1); assert.equal(f.backend.unlocks, 1);
   } finally { await f.cleanup(); }
 });
@@ -351,6 +354,50 @@ test('fresh session read failure and cached write failure are never automaticall
     assert.equal(result.status, 'error'); assert.equal(attempts, 1); assert.equal(created, 2);
   } finally { await ops.close(); await f.cleanup(); }
 });
+test('request cache omits large source and rejects new writes at capacity without evicting old IDs', async () => {
+  const f = await fixture();
+  const ops = new Operations(f.store, credentials, new AuditLog(f.logDirectory), () => f.backend, 1);
+  try {
+    const args = { connection_id: f.connection.connection_id, source_uri: source,
+      source: 'REPORT ztest.\n' + 'x'.repeat(256 * 1024),
+      expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'large' };
+    const first = await ops.run('update_source', args);
+    assert.equal((first.data as { source: string }).source, args.source);
+    const duplicate = await ops.run('update_source', args);
+    assert.equal(duplicate.operation_id, first.operation_id);
+    assert.equal((duplicate.data as { source?: string }).source, undefined);
+    assert.ok(Buffer.byteLength(JSON.stringify(duplicate)) <= 32 * 1024);
+    await assert.rejects(ops.run('update_source', { ...args, request_id: 'new' }), /cache is full/);
+    assert.equal((await ops.run('update_source', args)).operation_id, first.operation_id);
+    assert.equal(f.backend.saves, 1);
+  } finally { await ops.close(); await f.cleanup(); }
+});
+
+test('authentication counts toward concurrency even for invalid tokens, and releases slots after rejection', async () => {
+  const f = await fixture();
+  const original = f.store.authenticate.bind(f.store);
+  let releaseGate!: () => void;
+  const gate = new Promise<void>(resolve => { releaseGate = resolve; });
+  let reached!: () => void;
+  const occupied = new Promise<void>(resolve => { reached = resolve; });
+  let calls = 0;
+  f.store.authenticate = async () => { calls++; if (calls === 16) reached(); await gate; return false; };
+  const runtime = await startHttp(f.store, f.operations, 0);
+  const address = runtime.listener.address(); assert.ok(address && typeof address !== 'string');
+  const url = `http://127.0.0.1:${address.port}/mcp`;
+  const options = { method: 'POST', headers: { Authorization: 'Bearer invalid' } };
+  const pending = Array.from({ length: 16 }, () => fetch(url, options));
+  try {
+    await occupied;
+    assert.equal((await fetch(url, options)).status, 503);
+    assert.equal(calls, 16);
+    releaseGate();
+    assert.ok((await Promise.all(pending)).every(response => response.status === 401));
+    f.store.authenticate = original;
+    assert.equal((await fetch(url, options)).status, 401);
+  } finally { releaseGate(); await Promise.allSettled(pending); await runtime.close(); await f.cleanup(); }
+});
+
 test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP rejects bad auth/origin', async () => {
   const f = await fixture();
   const token = await f.store.createToken(); const runtime = await startHttp(f.store, f.operations, 0);

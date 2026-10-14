@@ -69,15 +69,15 @@ export async function startHttp(store: ConfigStore, operations: Operations, port
     if (!host || !/^127\.0\.0\.1:\d+$/.test(host)) { res.sendStatus(403); return; }
     if (req.headers.origin) { res.sendStatus(403); return; }
     if (stopping || inFlight >= 16) { res.sendStatus(503); return; }
-    const auth = req.headers.authorization;
-    try {
-      if (!auth?.startsWith('Bearer ') || !(await store.authenticate(auth.slice(7)))) { res.sendStatus(401); return; }
-    } catch { res.sendStatus(503); return; }
-    if (stopping || inFlight >= 16) { res.sendStatus(503); return; }
     inFlight++;
     let released = false;
     const release = () => { if (!released) { released = true; inFlight--; } };
     res.once('finish', release); res.once('close', release);
+    const auth = req.headers.authorization;
+    try {
+      if (!auth?.startsWith('Bearer ') || !(await store.authenticate(auth.slice(7)))) { res.sendStatus(401); return; }
+    } catch { res.sendStatus(503); return; }
+    if (stopping || released) { if (!released) res.sendStatus(503); return; }
     next();
   });
   app.use(express.json({ limit: '2mb', type: 'application/json' }));
