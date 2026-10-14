@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { AdtBackend, adtUri, programUri, type Backend, type Version } from './adt.js';
+import { AdtBackend, adtUri, programUri, sameSavedSource, type Backend, type Version } from './adt.js';
 import { ConfigStore, digest, type Connection, type Credentials } from './config.js';
 import { AuditLog } from './audit.js';
 import { AppError, safeError } from './errors.js';
@@ -63,7 +63,7 @@ export class Operations {
     try {
       const config = await this.store.load();
       if (tool === 'list_connections') return { operation_id: id, status: 'success', completed_steps: [], data:
-        config.connections.map(c => ({ connection_id: c.connection_id, name: c.name, write_enabled: c.write_enabled, allowed_packages: c.allowed_packages })) };
+        config.connections.map(c => ({ connection_id: c.connection_id, name: c.name, write_enabled: c.write_enabled })) };
       const connection = config.connections.find(c => c.connection_id === input.connection_id);
       if (!connection) throw new AppError('CONNECTION_NOT_FOUND', 'Unknown connection ID');
       if (writes.has(tool) && !connection.write_enabled) throw new AppError('WRITE_DISABLED', 'Enable writes in local connection settings first');
@@ -87,8 +87,7 @@ export class Operations {
         ...(ctx.warnings.length ? { warnings: ctx.warnings } : {}) };
     }
   }
-  private policy(c: Connection, pkg: string, transport?: string) {
-    if (!c.allowed_packages.some(p => p.toUpperCase() === pkg.toUpperCase())) throw new AppError('PACKAGE_NOT_ALLOWED', 'Package is outside the write allowlist');
+  private requireTransport(pkg: string, transport?: string) {
     if (pkg.toUpperCase() !== '$TMP' && !transport) throw new AppError('TRANSPORT_REQUIRED', 'A transport task is required for this package');
   }
   private async locked<T>(b: Backend, object: string, ctx: Context, action: (handle: string) => Promise<T>): Promise<T> {
@@ -117,7 +116,7 @@ export class Operations {
       case 'syntax_check': return b.check(adtUri(p.object_uri!), p.version ?? 'inactive');
       case 'list_transport_requests': return b.transports();
       case 'create_program': {
-        this.policy(c, p.package_name!, p.transport_task);
+        this.requireTransport(p.package_name!, p.transport_task);
         await ctx.event('started');
         ctx.dispatched = true;
         const uri = await b.create(p.name!, p.description!, p.package_name!, p.transport_task);
@@ -127,7 +126,7 @@ export class Operations {
       }
       case 'update_source': {
         const object = programUri(p.source_uri!);
-        this.policy(c, await b.packageOf(object), p.transport_task);
+        this.requireTransport(await b.packageOf(object), p.transport_task);
         await ctx.event('started');
         return this.locked(b, object, ctx, async handle => {
           ctx.steps.push('locked');
@@ -154,21 +153,28 @@ export class Operations {
           ctx.confirmed = true;
           await ctx.event('saved');
           const saved = await b.read(object, 'inactive');
-          if (saved.hash !== digest(p.source!)) throw new AppError('VERIFY_FAILED', 'Saved source differs from the submitted source');
+          if (!sameSavedSource(saved.source, p.source!)) throw new AppError('VERIFY_FAILED', 'Saved source differs from the submitted source');
           await ctx.event('verified');
           return { ...saved, activated: false };
         });
       }
       case 'activate_objects': {
-        for (const o of p.objects!) this.policy(c, await b.packageOf(programUri(o.object_uri)), '$ACTIVATION');
+        for (const o of p.objects!) await b.packageOf(programUri(o.object_uri));
         await ctx.event('started');
         const results: unknown[] = [];
         for (const o of p.objects!) {
           const uri = programUri(o.object_uri);
           try {
-          const result = await this.locked(b, uri, ctx, async () => {
+          const source = await this.locked(b, uri, ctx, async () => {
             const source = await b.read(uri, 'inactive');
             if (source.revision !== o.expected_revision) throw new AppError('VERSION_CONFLICT', 'Inactive source changed; read it again');
+            return source;
+          });
+          // SAP activation must acquire its own enqueue lock; release our editor lock first.
+          if (this.poisoned.has(b)) throw new AppError('LOCK_CLEANUP_FAILED', 'Editor lock was not released; activation was not sent');
+          const checked = await b.read(uri, 'inactive');
+          if (checked.revision !== source.revision) throw new AppError('VERSION_CONFLICT', 'Inactive source changed after unlocking');
+          await ctx.event('activation_version_checked');
             ctx.dispatched = true;
             ctx.confirmed = false;
             const result = await b.activate(uri);
@@ -176,12 +182,10 @@ export class Operations {
             await ctx.event(result.success ? 'activated' : 'activation_failed');
             if (result.success) {
               const active = await b.read(uri, 'active');
-              if (active.hash !== source.hash) throw new AppError('VERIFY_FAILED', 'Active source differs after activation');
+              if (!sameSavedSource(active.source, source.source)) throw new AppError('VERIFY_FAILED', 'Active source differs after activation');
               await ctx.event('activation_verified');
             }
-            return { object_uri: uri, ...result };
-          });
-          results.push(result);
+          results.push({ object_uri: uri, ...result });
           if (!result.success) throw new AppError('ACTIVATION_FAILED', 'Activation failed', { results });
           } catch (error) {
             const failure = safeError(error);

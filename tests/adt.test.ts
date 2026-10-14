@@ -6,6 +6,56 @@ import { AdtBackend } from '../src/adt.js';
 import { connectionSchema } from '../src/config.js';
 import { safeError } from '../src/errors.js';
 
+test('403 classification distinguishes an editor lock from CSRF and unknown rejection', () => {
+  assert.equal(safeError({ status: 403, message: '使用者 TEST 当前编辑 ZTEST005' }).code, 'OBJECT_LOCKED');
+  assert.equal(safeError({ status: 403, message: 'CSRF token validation failed' }).code, 'CSRF_FAILED');
+  assert.equal(safeError({ status: 403, message: 'Forbidden' }).code, 'HTTP_FORBIDDEN');
+});
+
+test('search filters exact subtypes before limiting; package results exclude URI-less categories', async () => {
+  const rows = [
+    { name: 'ZINCLUDE', type: 'PROG/I', uri: '/sap/bc/adt/programs/includes/zinclude' },
+    { name: 'ZREPORT1', type: 'PROG/P', uri: '/sap/bc/adt/programs/programs/zreport1' },
+    { name: 'ZREPORT2', type: 'PROG/P', uri: '/sap/bc/adt/programs/programs/zreport2' }
+  ];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url!, 'http://local');
+    res.setHeader('Content-Type', 'application/xml');
+    if (url.pathname.endsWith('/compatibility/graph')) {
+      res.setHeader('x-csrf-token', 'test'); res.end('<graph/>');
+    } else if (url.pathname.endsWith('/search')) {
+      const selected = url.searchParams.get('query') === 'SATURATED' ? Array.from({ length: Number(url.searchParams.get('maxResults')) }, () => rows[0]) : rows;
+      res.end(`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">${selected.map(r =>
+        `<adtcore:objectReference adtcore:name="${r.name}" adtcore:type="${r.type}" adtcore:uri="${r.uri}"/>`).join('')}</adtcore:objectReferences>`);
+    } else if (url.pathname.endsWith('/nodestructure')) {
+      res.end(`<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><TREE_CONTENT>
+        <SEU_ADT_REPOSITORY_OBJ_NODE><OBJECT_TYPE>DEVC/P</OBJECT_TYPE><OBJECT_NAME/><OBJECT_URI/></SEU_ADT_REPOSITORY_OBJ_NODE>
+        <SEU_ADT_REPOSITORY_OBJ_NODE><OBJECT_TYPE>DEVC/I</OBJECT_TYPE><OBJECT_NAME/><OBJECT_URI> </OBJECT_URI></SEU_ADT_REPOSITORY_OBJ_NODE>
+        ${rows.slice(1).map(r => `<SEU_ADT_REPOSITORY_OBJ_NODE><OBJECT_TYPE>${r.type}</OBJECT_TYPE><OBJECT_NAME>${r.name}</OBJECT_NAME><OBJECT_URI>${r.uri}</OBJECT_URI></SEU_ADT_REPOSITORY_OBJ_NODE>`).join('')}
+        </TREE_CONTENT></DATA></asx:values></asx:abap>`);
+    } else { res.end(''); }
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const backend = new AdtBackend(connectionSchema.parse({ connection_id: randomUUID(), name: 'mock',
+    base_url: `http://127.0.0.1:${address.port}`, client: '001', language: 'EN', username: 'TEST' }), 'fake');
+  try {
+    const exact = await backend.search('Z*', 'prog/p', 1);
+    assert.deepEqual(exact.objects.map(o => o.name), ['ZREPORT1']); assert.equal(exact.truncated, true);
+    const all = await backend.search('Z*', 'PROG/P', 3);
+    assert.deepEqual(all.objects.map(o => o.type), ['PROG/P', 'PROG/P']); assert.equal(all.truncated, false);
+    assert.equal((await backend.search('Z*', 'PROG', 3)).objects.length, 3);
+    assert.equal((await backend.search('Z*', undefined, 3)).objects.length, 3);
+    const saturated = await backend.search('SATURATED', 'PROG/P', 3);
+    assert.equal(saturated.objects.length, 0); assert.equal(saturated.truncated, true);
+    const small = await backend.listPackage('$TMP', 1);
+    assert.equal(small.objects[0].OBJECT_NAME, 'ZREPORT1'); assert.equal(small.truncated, true);
+    const complete = await backend.listPackage('$TMP', 2);
+    assert.equal(complete.objects.length, 2); assert.equal(complete.truncated, false);
+    assert.ok(complete.objects.every(o => o.OBJECT_URI));
+  } finally { await backend.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test('real ADT adapter carries Client, language, cookies and CSRF through read/save/check/activate', async () => {
   const object = '/sap/bc/adt/programs/programs/ztest';
   const source = `${object}/source/main`;

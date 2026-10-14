@@ -35,7 +35,7 @@ const descriptions: Record<keyof typeof schemas, string> = {
   search_objects: 'Search SAP repository objects and return relative ADT object URIs.',
   list_package_objects: 'List package contents with a limit. Pagination is not supported in this release.',
   read_source: 'Read the exact active or inactive main source. Keep the revision for a later update.',
-  create_program: 'Create a REPORT shell in an allowed package. Does not activate it. Do not blindly retry unknown results.',
+  create_program: 'Create a REPORT shell in the specified package, subject to SAP permissions. Does not activate it. Do not blindly retry unknown results.',
   update_source: 'Save program main source as inactive under lock with expected revision. Does not activate.',
   syntax_check: 'Check the requested version and return backend diagnostics.',
   activate_objects: 'Activate explicitly selected programs after checking inactive revisions. May partially succeed.',

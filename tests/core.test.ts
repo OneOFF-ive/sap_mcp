@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ConfigStore, connectionSchema, normalizeUrl, type Credentials } from '../src/config.js';
 import { AuditLog } from '../src/audit.js';
-import { adtUri, sourceResult, type Backend, type Version } from '../src/adt.js';
+import { adtUri, sameSavedSource, sourceResult, type Backend, type Version } from '../src/adt.js';
 import { Operations } from '../src/operations.js';
 import { AppError } from '../src/errors.js';
 import { startHttp } from '../src/server.js';
@@ -15,6 +15,13 @@ import { startHttp } from '../src/server.js';
 const object = '/sap/bc/adt/programs/programs/ztest';
 const source = `${object}/source/main`;
 const credentials: Credentials = { get: async () => 'fake', set: async () => {}, remove: async () => {} };
+test('save comparison ignores only final line breaks, not content or whitespace', () => {
+  assert.equal(sameSavedSource('REPORT ztest.\r\n', 'REPORT ztest.'), true);
+  assert.equal(sameSavedSource('REPORT ztest.\n\n', 'REPORT ztest.\r\n'), true);
+  assert.equal(sameSavedSource('REPORT ztest. ', 'REPORT ztest.'), false);
+  assert.equal(sameSavedSource('REPORT ztest.\n* comment', 'REPORT ztest.* comment'), false);
+  assert.equal(sameSavedSource('WRITE 1.', 'WRITE 2.'), false);
+});
 class FakeBackend implements Backend {
   active = 'REPORT ztest.'; inactive: string | undefined;
   saves = 0; locks = 0; unlocks = 0; failUnlock = false; uncertain = false; activationPass = true;
@@ -45,7 +52,7 @@ async function fixture() {
   const directory = await mkdtemp(join(root, 'test-'));
   const store = new ConfigStore(directory);
   const connection = connectionSchema.parse({ connection_id: randomUUID(), name: 'dev', base_url: 'http://sap.test:8000',
-    client: '001', username: 'TEST', language: 'EN', write_enabled: true, allowed_packages: ['$TMP'] });
+    client: '001', username: 'TEST', language: 'EN', write_enabled: true });
   await store.save({ schema_version: 1, connections: [connection], tokens: [] });
   const backend = new FakeBackend(connection.connection_id);
   const logDirectory = join(directory, 'logs');
@@ -53,6 +60,72 @@ async function fixture() {
   return { directory, store, connection, backend, operations, logDirectory,
     cleanup: async () => { await operations.close(); await rm(directory, { recursive: true, force: true }); } };
 }
+
+test('SAP stripping the final newline succeeds and returns the actual saved revision', async () => {
+  const f = await fixture(); try {
+    f.backend.save = async (_uri, code) => { f.backend.saves++; f.backend.inactive = code.replace(/[\r\n]+$/, ''); };
+    const result = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      source_uri: source, source: 'REPORT ztest.\r\n* test\r\n',
+      expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'normalized-save' });
+    assert.equal(result.status, 'success'); assert.equal(result.outcome, 'confirmed');
+    assert.deepEqual(result.data, { ...await f.backend.read(object, 'inactive'), activated: false });
+  } finally { await f.cleanup(); }
+});
+
+test('save verification still fails for changed program content', async () => {
+  const f = await fixture(); try {
+    f.backend.save = async () => { f.backend.saves++; f.backend.inactive = 'REPORT ztest. WRITE 99.'; };
+    const result = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      source_uri: source, source: 'REPORT ztest. WRITE 1.\r\n',
+      expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'changed-content' });
+    assert.equal(result.error?.code, 'VERIFY_FAILED'); assert.equal(result.outcome, 'partial');
+  } finally { await f.cleanup(); }
+});
+
+test('activation verification accepts SAP removing final line breaks', async () => {
+  const f = await fixture(); try {
+    f.backend.inactive = 'REPORT ztest.\r\n* test\r\n';
+    f.backend.activate = async () => {
+      f.backend.active = f.backend.inactive!.replace(/[\r\n]+$/, '');
+      f.backend.inactive = undefined; return { success: true, messages: [] };
+    };
+    const result = await f.operations.run('activate_objects', { connection_id: f.connection.connection_id,
+      objects: [{ object_uri: object, expected_revision: (await f.backend.read(object, 'inactive')).revision }], request_id: 'normalized-activation' });
+    assert.equal(result.status, 'success'); assert.ok(result.completed_steps.includes('activation_verified'));
+  } finally { await f.cleanup(); }
+});
+
+test('activation releases the editor lock before calling SAP activation', async () => {
+  const f = await fixture(); try {
+    f.backend.inactive = 'REPORT ztest.\n* activation test';
+    const original = f.backend.activate.bind(f.backend);
+    f.backend.activate = async () => {
+      assert.equal(f.backend.locks, f.backend.unlocks, 'Editor lock must be released before activation');
+      return original();
+    };
+    const result = await f.operations.run('activate_objects', { connection_id: f.connection.connection_id,
+      objects: [{ object_uri: object, expected_revision: (await f.backend.read(object, 'inactive')).revision }], request_id: 'unlock-first' });
+    assert.equal(result.status, 'success');
+    assert.ok(result.completed_steps.indexOf('unlocked') < result.completed_steps.indexOf('activated'));
+  } finally { await f.cleanup(); }
+});
+
+test('activation stops when lock release fails or the source changes after unlocking', async () => {
+  for (const failUnlock of [true, false]) {
+    const f = await fixture(); try {
+      f.backend.inactive = 'REPORT ztest.\n* original';
+      const revision = (await f.backend.read(object, 'inactive')).revision;
+      let activations = 0;
+      f.backend.activate = async () => { activations++; return { success: true, messages: [] }; };
+      f.backend.failUnlock = failUnlock;
+      if (!failUnlock) f.backend.unlock = async () => { f.backend.unlocks++; f.backend.inactive += '\n* concurrent edit'; };
+      const result = await f.operations.run('activate_objects', { connection_id: f.connection.connection_id,
+        objects: [{ object_uri: object, expected_revision: revision }], request_id: 'activation-blocked' });
+      assert.equal(result.error?.code, failUnlock ? 'LOCK_CLEANUP_FAILED' : 'VERSION_CONFLICT');
+      assert.equal(activations, 0);
+    } finally { await f.cleanup(); }
+  }
+});
 
 test('normalization preserves client and rejects URL credentials/custom paths', () => {
   assert.equal(normalizeUrl('http://sap.test:8000/sap/bc/adt/'), 'http://sap.test:8000');
@@ -72,6 +145,23 @@ test('tokens are stored hashed and revocation takes effect', async () => {
     assert.equal((await readFile(join(f.directory, 'config.json'), 'utf8')).includes(token), false);
     const config = await f.store.load(); config.tokens = []; await f.store.save(config);
     assert.equal(await f.store.authenticate(token), false);
+  } finally { await f.cleanup(); }
+});
+test('legacy package restrictions are ignored and removed on save', async () => {
+  const f = await fixture(); try {
+    const config = await f.store.load();
+    const legacy = { ...config, connections: [{ ...config.connections[0], allowed_packages: ['$TMP'] }] };
+    await writeFile(join(f.directory, 'config.json'), JSON.stringify(legacy));
+    const loaded = await f.store.load();
+    assert.equal('allowed_packages' in loaded.connections[0], false);
+    const result = await f.operations.run('create_program', { connection_id: f.connection.connection_id,
+      name: 'ZTEST', package_name: 'ZNEW_PACKAGE', description: 'Test', transport_task: 'DEVK900001', request_id: 'legacy-package' });
+    assert.equal(result.status, 'success');
+    const listed = await f.operations.run('list_connections', {});
+    assert.equal(JSON.stringify(listed.data).includes('allowed_packages'), false);
+    await f.store.save(loaded);
+    assert.equal((await readFile(join(f.directory, 'config.json'), 'utf8')).includes('allowed_packages'), false);
+    assert.equal(loaded.connections[0].connection_id, f.connection.connection_id);
   } finally { await f.cleanup(); }
 });
 test('concurrent duplicate updates save once, unlock and log no source or handle', async () => {
@@ -96,16 +186,19 @@ test('stale revision and existing inactive draft do not overwrite code', async (
     assert.equal(result.error?.code, 'VERSION_CONFLICT'); assert.equal(f.backend.saves, 0); assert.equal(f.backend.unlocks, 1);
   } finally { await f.cleanup(); }
 });
-test('disabled writes and disallowed packages fail before locks', async () => {
+test('disabled writes fail before locks; nonlocal packages require transport tasks', async () => {
   const f = await fixture(); try {
     const config = await f.store.load(); config.connections[0].write_enabled = false; await f.store.save(config);
     let result = await f.operations.run('create_program', { connection_id: f.connection.connection_id, name: 'ZTEST',
       package_name: '$TMP', description: 'Test', request_id: 'disabled' });
     assert.equal(result.error?.code, 'WRITE_DISABLED');
-    config.connections[0].write_enabled = true; config.connections[0].allowed_packages = ['ZOTHER']; await f.store.save(config);
-    result = await f.operations.run('update_source', { connection_id: f.connection.connection_id, source_uri: source,
-      source: '', expected_revision: '0'.repeat(64), request_id: 'denied' });
-    assert.equal(result.error?.code, 'PACKAGE_NOT_ALLOWED'); assert.equal(f.backend.locks, 0);
+    config.connections[0].write_enabled = true; await f.store.save(config);
+    result = await f.operations.run('create_program', { connection_id: f.connection.connection_id,
+      name: 'ZTEST', package_name: 'ZOTHER', description: 'Test', request_id: 'no-transport' });
+    assert.equal(result.error?.code, 'TRANSPORT_REQUIRED'); assert.equal(f.backend.locks, 0);
+    result = await f.operations.run('create_program', { connection_id: f.connection.connection_id,
+      name: 'ZTEST', package_name: 'ZOTHER', description: 'Test', transport_task: 'DEVK900001', request_id: 'any-package' });
+    assert.equal(result.status, 'success');
   } finally { await f.cleanup(); }
 });
 test('unlock failure preserves confirmed save and returns warning', async () => {

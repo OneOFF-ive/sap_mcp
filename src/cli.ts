@@ -36,10 +36,8 @@ async function promptConnection(name: string, old?: Connection) {
   const username = await input({ message: 'SAP username:', default: old?.username });
   const language = await input({ message: 'Language:', default: old?.language ?? 'EN' });
   const write_enabled = await confirm({ message: 'Enable program writes?', default: old?.write_enabled ?? false });
-  const allowed_packages = write_enabled ? (await input({ message: 'Allowed packages (comma separated):',
-    default: old?.allowed_packages.join(',') ?? '$TMP' })).split(',').map(p => p.trim().toUpperCase()).filter(Boolean) : [];
   return connectionSchema.parse({ connection_id: old?.connection_id ?? randomUUID(), name,
-    base_url, client, username, language: language.toUpperCase(), write_enabled, allowed_packages });
+    base_url, client, username, language: language.toUpperCase(), write_enabled });
 }
 const cli = new Command().name('sap-mcp').description('Standalone SAP HTTP ADT MCP server').version('0.1.0');
 const connections = cli.command('connection').description('Manage SAP connections');

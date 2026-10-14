@@ -23,6 +23,11 @@ export function programUri(uri: string): string {
   return uri.replace(/\/source\/main$/, '');
 }
 export type Source = { object_uri: string; source_uri: string; source: string; version: Version; revision: string; hash: string };
+export function sameSavedSource(left: string, right: string): boolean {
+  // SAP may remove final line breaks; preserve every other character for verification.
+  const withoutFinalLineBreaks = (source: string) => source.replace(/[\r\n]+$/, '');
+  return withoutFinalLineBreaks(left) === withoutFinalLineBreaks(right);
+}
 export function sourceResult(connectionId: string, object: string, uri: string, source: string, version: Version): Source {
   const hash = digest(source);
   return { object_uri: object, source_uri: uri, source, version, hash,
@@ -55,7 +60,8 @@ class BoundedHttp implements HttpClient {
       params: o.qs, auth: o.auth, data: o.body, timeout: 15000, maxRedirects: 0,
       maxContentLength: 4 * 1024 * 1024, maxBodyLength: 2 * 1024 * 1024, responseType: 'text', proxy: false,
       validateStatus: () => true });
-    if (r.status >= 300) throw new HttpClientException('Backend HTTP request failed', undefined, r.status, undefined, o);
+    if (r.status >= 300) throw new HttpClientException('Backend HTTP request failed', undefined, r.status, undefined, o,
+      { body: r.data, status: r.status, statusText: r.statusText, headers: {} });
     return { body: r.data, status: r.status, statusText: r.statusText, headers: r.headers as Record<string, string> };
     } catch (error) {
       if (error instanceof HttpClientException) throw error;
@@ -77,13 +83,21 @@ export class AdtBackend implements Backend {
       limitations: ['Writes are limited to REPORT main sources', 'Source revision checks use hashes under SAP object locks'] };
   }
   async search(query: string, type: string | undefined, limit: number) {
-    const rows = await this.client.searchObject(query, type, limit + 1);
-    return { objects: rows.slice(0, limit).map(r => ({ name: r['adtcore:name'], type: r['adtcore:type'],
-      package_name: r['adtcore:packageName'], object_uri: adtUri(r['adtcore:uri']), description: r['adtcore:description'] })), truncated: rows.length > limit };
+    const requestedType = type?.toUpperCase();
+    // The ADT library sends only the type family (PROG), so enforce subtypes locally.
+    const fetchLimit = requestedType?.includes('/') ? 501 : limit + 1;
+    const rows = await this.client.searchObject(query, requestedType, fetchLimit);
+    const matches = rows.filter(r => !requestedType || (requestedType.includes('/')
+      ? r['adtcore:type'].toUpperCase() === requestedType
+      : r['adtcore:type'].split('/')[0].toUpperCase() === requestedType));
+    return { objects: matches.slice(0, limit).map(r => ({ name: r['adtcore:name'], type: r['adtcore:type'],
+      package_name: r['adtcore:packageName'], object_uri: adtUri(r['adtcore:uri']), description: r['adtcore:description'] })),
+      truncated: matches.length > limit || rows.length >= fetchLimit };
   }
   async listPackage(name: string, limit: number) {
     const result = await this.client.nodeContents('DEVC/K', name);
-    return { objects: result.nodes.slice(0, limit), truncated: result.nodes.length > limit,
+    const objects = result.nodes.filter(node => typeof node.OBJECT_URI === 'string' && node.OBJECT_URI.trim().length > 0);
+    return { objects: objects.slice(0, limit), truncated: objects.length > limit,
       pagination_supported: false };
   }
   async read(object: string, version: Version, requestedSource?: string) {

@@ -1,13 +1,12 @@
-# SAP MCP 第一版架构设计
+# SAP MCP 架构
 
-日期：2026-10-13  
-状态：第一版已实现并通过本地模拟测试，待真实 SAP 系统联调。本文描述目标设计；实际支持范围和差异见 README。
+本文说明 SAP MCP 0.1.0 的模块、接口和操作流程。安装与使用步骤见 [README](../README.md)。
 
 ## 1. 目标与范围
 
 构建不依赖 VS Code 的本地 CLI 应用，通过 HTTP ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。
 
-第一版包括：
+当前功能包括：
 
 - 手动配置多个 SAP 连接，测试登录并探测 ADT 能力。
 - HTTP MCP 服务及本地访问令牌认证。
@@ -15,7 +14,7 @@
 - 创建可执行 REPORT 程序、修改源码、语法检查和显式激活。
 - 对象锁、版本冲突、传输请求和部分失败处理。
 
-第一版不包含桌面应用、Web 页面、stdio MCP、SAP GUI 配置解析、RFC、SAProuter、SNC/SSO、调试、任意 ABAP 执行、删除对象或释放传输请求。
+当前不提供桌面应用、Web 页面、stdio MCP、SAP GUI 配置解析、RFC、SAProuter、SNC/SSO、调试、任意 ABAP 执行、删除对象或释放传输请求。
 
 ## 2. 总体架构
 
@@ -34,7 +33,7 @@ flowchart LR
 
 采用单进程模块化结构，不拆分微服务。CLI 启动服务后，各连接按需建立独立 SAP 会话。MCP 会话不等于 SAP 会话，不向 agent 暴露 SAP cookie、CSRF token 或锁句柄。
 
-建议技术栈：TypeScript、Node.js、官方 MCP TypeScript SDK、`abap-adt-api`。前者用于协议处理，后者作为可替换的 ADT 适配器依赖；业务层不直接依赖其数据结构。具体依赖版本及凭据库在实现阶段验证并锁定。
+技术栈：TypeScript、Node.js、官方 MCP TypeScript SDK、Express、Zod、`abap-adt-api` 和 Axios。Windows 凭据使用 `@napi-rs/keyring`，依赖版本记录在 package.json 与 package-lock.json。业务层通过 Backend 接口调用 ADT 适配器。
 
 | 模块 | 职责 |
 | --- | --- |
@@ -49,38 +48,38 @@ flowchart LR
 
 | 字段 | 含义 |
 | --- | --- |
-| `connection_id` | 稳定内部 ID，重命名连接不改变它 |
-| `name` | 用户定义的唯一名称，例如 dev |
+| `connection_id` | 稳定内部 UUID，编辑连接不改变它；当前无重命名命令 |
+| `name` | 用户定义的唯一名称，仅允许英文字母、数字、下划线和连字符 |
 | `base_url` | SAP HTTP 地址，例如 http://sap-host:8000 |
 | `client` | 三位数字字符串，例如 001，保留前导零 |
 | `username` | SAP 用户名 |
 | `language` | ADT 登录语言参数，例如 EN；按后端支持验证 |
-| `credential_ref` | 凭据引用，不包含密码 |
 | `write_enabled` | 默认 false，由本地配置显式启用 |
-| `allowed_packages` | 允许写入的包；启用写入时要求明确配置 |
 
-第一版只使用 HTTP ADT。`base_url` 不含用户名、密码、查询参数和 fragment；CLI 可接受末尾 `/sap/bc/adt` 并规范化，其他自定义反向代理路径暂不支持。端口由用户填写，不根据系统号推算。
+SAP 连接使用 HTTP ADT。`base_url` 不含用户名、密码、查询参数和 fragment；CLI 可接受末尾 `/sap/bc/adt` 并规范化，其他自定义反向代理路径暂不支持。端口由用户填写，不根据系统号推算。
 
-配置建议存放在 `%APPDATA%\sap-mcp\config.json`，含 `schema_version`。密码按稳定连接 ID 保存至 Windows 凭据管理器，更新配置采用原子替换。删除连接时清理其凭据；运行期间有操作的连接不能删除或重新配置。
+配置存放在 `%APPDATA%\sap-mcp\config.json`，含 `schema_version=1`，可由 `SAP_MCP_CONFIG_DIR` 覆盖。连接没有 credential_ref 字段，直接按 connection_id 访问 Windows 凭据管理器。配置更新采用临时文件加 rename；删除连接时清理凭据。CLI 使用 runtime.lock 禁止服务运行期间添加、编辑或删除连接，config.lock 串行化配置变更；服务运行时可管理令牌。
 
-HTTP Basic 凭据和代码流量没有 TLS 加密，第一版部署限定在用户认可的可信网络；HTTP 客户端不向其他 origin 转发认证信息。后续 HTTPS 支持仍通过同一适配器扩展。
+HTTP Basic 凭据和代码流量没有 TLS 加密，应在可信网络内使用。HTTP 客户端不向其他 origin 转发认证信息。
 
 ## 4. CLI 设计
 
 以下命令已实现；实际执行方式和环境要求见项目 README。
 
+表中的 `<连接名称>`、`<令牌ID>` 为占位符，执行前替换为实际值，不保留尖括号。连接名称由用户定义，不是命令的固定部分。项目内可使用 `npm start -- connection add <连接名称>` 等方式执行。
+
 | 命令 | 行为 |
 | --- | --- |
-| `sap-mcp connection add dev` | 交互填写连接，隐藏输入密码 |
-| `sap-mcp connection list` | 列出连接和配置完整性，不自动登录所有系统 |
-| `sap-mcp connection edit dev` | 修改配置或更新凭据 |
-| `sap-mcp connection remove dev` | 删除配置和关联凭据 |
-| `sap-mcp connection test dev` | 验证网络、登录、discovery 和后端能力 |
+| `sap-mcp connection add <连接名称>` | 交互填写连接，隐藏输入密码 |
+| `sap-mcp connection list` | 列出 ID、名称、URL、Client、用户名及写入开关，不登录系统 |
+| `sap-mcp connection edit <连接名称>` | 修改配置或更新凭据 |
+| `sap-mcp connection remove <连接名称>` | 删除配置和关联凭据 |
+| `sap-mcp connection test <连接名称>` | 验证网络、登录、discovery 和后端能力 |
 | `sap-mcp token create` | 生成高熵 MCP 令牌，明文仅输出一次 |
-| `sap-mcp token revoke <token-id>` | 撤销指定令牌 |
+| `sap-mcp token revoke <令牌ID>` | 撤销指定令牌 |
 | `sap-mcp serve --port 8765` | 前台启动服务，固定监听 127.0.0.1 |
 
-连接测试是只读操作，不通过创建程序测试权限。输出应区分网络失败、登录失败、ADT 未启用、授权不足和能力不支持。成功读取不代表具有写入权限。
+连接测试按唯一名称选取配置，登录并输出 discovery 和探测时间，结束后退出会话。它是只读操作，不通过创建程序测试权限。错误分类以当前 errors.ts 为准，不把所有 HTTP 403 都解释为权限不足。成功读取不代表具有写入权限。
 
 密码不接受命令行明文参数。凭据存储失败必须报告，不回退到配置文件明文存储。首次版本要求 Windows 凭据管理器可用。
 
@@ -89,12 +88,13 @@ HTTP Basic 凭据和代码流量没有 TLS 加密，第一版部署限定在用�
 - 端点：`http://127.0.0.1:8765/mcp`，端口可配置。
 - 传输：Streamable HTTP，使用官方 SDK，支持初始化及协议版本协商。
 - 认证：`Authorization: Bearer <token>`；服务端存储令牌校验值，不保存令牌明文。
-- 网络：第一版不开放局域网绑定；校验 Host 和 Origin，拒绝不可信浏览器来源。
-- 会话：协议会话不是认证凭据，每个请求仍需认证。
-- HTTP 行为：按 SDK 实现 POST、GET 和 DELETE；未提供 GET 事件流时按规范返回 405。
-- 限制：设置请求体大小、搜索数量、源码大小、并发和超时上限。
+- 网络：固定绑定 127.0.0.1，Host 要求 127.0.0.1:端口；localhost 被拒绝，所有带 Origin 的请求被拒绝。
+- 会话：MCP 使用无状态传输，每个 POST 建立 SDK server/transport，响应结束后关闭；每个请求仍需认证。SAP 会话按连接保留。
+- HTTP 行为：POST /mcp 由 SDK 处理，GET、DELETE 及其他方法返回 405，没有 GET 事件流。
+- 限制：JSON 请求体 2 MiB；source 字符串最多 1,048,576 个 JavaScript 字符；列表 limit 默认 100、最大 500；激活列表最多 20；HTTP 在途请求最多 16，操作队列最多 100，内存写请求索引最多 10,000。
+- 超时：SAP 单请求 15 秒，请求/响应大小分别限制为 2/4 MiB；本地 HTTP requestTimeout 30 秒、headersTimeout 10 秒。requestTimeout 不等于完整 SAP 操作的执行期限。
 
-令牌授予访问此服务中已配置连接的能力；第一版不实现逐令牌的连接授权。连接本身的写入开关和包范围始终由服务端执行。agent 不能用 tools 修改连接、凭据、令牌或写入策略。
+令牌授予访问此服务中已配置连接的能力，当前不提供逐令牌的连接授权。连接不限定包，实际读写权限由 SAP 用户权限决定，连接写入开关仍由服务端执行。旧配置的 `allowed_packages` 字段加载时忽略，再次保存时移除。agent 不能用 tools 修改连接、凭据、令牌或写入策略。
 
 服务在前台运行，收到退出信号后停止接收新请求，等待在途操作并清理锁。日志与配置输出不得泄露密码、认证头、cookie 或 CSRF token。
 
@@ -104,30 +104,30 @@ HTTP Basic 凭据和代码流量没有 TLS 加密，第一版部署限定在用�
 
 | Tool | 主要参数 | 主要结果 |
 | --- | --- | --- |
-| `list_connections` | 无 | ID、名称、配置状态、写入策略摘要 |
+| `list_connections` | 无 | ID、名称、write_enabled，不探测实时登录状态 |
 | `get_capabilities` | `connection_id` | discovery 支持的能力及探测时间 |
 | `search_objects` | 连接、`query`、可选类型、`limit` | 名称、类型、包、对象 URI、是否截断 |
-| `list_package_objects` | 连接、`package_name`、可选 `cursor`、`limit` | 对象和可用的后续游标 |
+| `list_package_objects` | 连接、`package_name`、`limit` | 后端节点字段、truncated、pagination_supported=false |
 | `read_source` | 连接、`object_uri`、可选 `source_uri`、`version` | 源码、源码 URI、实际版本、revision、哈希 |
 | `create_program` | 连接、`name`、`description`、`package_name`、可选 `transport_task`、`request_id` | 对象 URI、创建状态 |
 | `update_source` | 连接、`source_uri`、`source`、`expected_revision`、可选 `transport_task`、`request_id` | 保存状态、新 revision、inactive 状态 |
 | `syntax_check` | 连接、`object_uri`、`version` | 是否通过、结构化诊断 |
 | `activate_objects` | 连接、对象 URI 与预期 revision 列表、`request_id` | 各对象结果及部分失败信息 |
-| `list_transport_requests` | 连接、可选状态过滤 | 当前用户可用请求、任务、状态 |
+| `list_transport_requests` | 连接 | 当前用户的后端传输请求数据，无状态过滤参数 |
 
 `version` 使用 `active` 或 `inactive`；不存在指定版本时明确返回错误，不静默切换版本。`revision` 是服务封装的不透明值，包含版本上下文；源码 SHA-256 用于补充校验，不作为历史恢复承诺。
 
-分页依据后端能力实现。后端不支持完整分页时返回 `truncated`，不伪造完整遍历；服务游标必须绑定连接、查询和结果上下文。
+当前没有分页和 cursor 参数。包列表先剔除没有 OBJECT_URI 的节点，再限量和判断截断。搜索对完整子类型精确过滤，对类型族按族过滤；子类型搜索最多扫描后端 501 条类型族结果。达到扫描上限时即使返回对象不足 limit，也可能 truncated=true，需要缩小搜索条件。
 
-所有结果包含 `operation_id`、`status`、`completed_steps`、`data`，失败包含 `error`。写入结果还包含 `outcome`：`confirmed`、`partial` 或 `unknown`。MCP 通过 SDK 的结构化结果承载，工具失败设置 `isError`；参数及协议错误使用对应协议错误。
+进入操作执行阶段的结果包含 operation_id、status、completed_steps；成功包含 data，失败包含 error。写入结果还包含 outcome：confirmed、partial 或 unknown，可带 warnings。队列、重复请求冲突等执行前错误由 MCP 包装为 status/error，不保证包含 operation_id。结果通过 structuredContent 和文本 JSON 返回，工具失败设置 isError；schema 参数校验由 SDK 处理。
 
-诊断包括 severity、消息、对象或源码 URI、可用的位置。对外位置统一使用 1-based 行列，转换方式通过真实后端验证；无法映射的位置不编造。
+语法检查返回 passed、diagnostics 和 position_format；diagnostics 保留后端 uri、line、offset、severity、text，没有统一转换为 1-based 行列。检查失败通常返回 passed=false 的业务结果，不单独生成 SYNTAX_CHECK_FAILED 错误。
 
 ## 7. SAP 会话与能力
 
-连接首次使用时建立 SAP HTTP 会话，调用 ADT discovery 并缓存能力。cookie、CSRF token 和认证状态按连接隔离。
+连接首次使用时创建 ADT 客户端，HTTP 请求按需登录。get_capabilities 获取 discovery，其他 tools 不强制先调用该 tool。客户端实例在进程内按连接缓存，cookie、CSRF token 和认证状态按连接隔离。
 
-媒体类型、对象链接和功能支持通过 discovery 与对象元数据决定，不因某版本号就假定全功能可用。锁操作需要同一 SAP 会话上下文；对同一连接的写入及其相关检查，第一版采用串行执行。读取不会改变写入会话的会话模式。
+ADT 库处理媒体类型和各操作接口；读取通过对象元数据发现主源码，程序写入通过元数据验证 executableProgram。discovery 用于能力展示，尚未实现按 discovery 自动禁用 tools。锁操作使用 stateful SAP 会话；同一连接的所有操作串行执行，不同连接使用独立队列。
 
 CSRF 获取和更新由适配器处理。只有明确尚未执行的请求才可安全重试；网络超时不能直接解释为写入失败。若会话失效发生在持锁期间，先核实操作结果和锁状态，不自动换会话继续写入。
 
@@ -135,7 +135,7 @@ CSRF 获取和更新由适配器处理。只有明确尚未执行的请求才可
 
 ### 8.1 创建程序
 
-第一版创建可执行 REPORT 的对象壳，不把创建、写入源码和激活合并成一次不可分割操作。
+创建工具生成可执行 REPORT 的对象壳。创建、写入源码和激活是独立操作。
 
 验证连接写入策略、命名、目标包、对象不存在及传输任务，再通过 ADT 创建对象，返回真实 URI。远程创建存在竞态，以 SAP 返回为准。`$TMP` 是否无需传输任务由后端确认；其他包要求有效任务，服务不自动创建或释放传输请求。
 
@@ -153,73 +153,78 @@ CSRF 获取和更新由适配器处理。只有明确尚未执行的请求才可
 → 返回已完成步骤与最终状态
 ```
 
-后端支持可靠 ETag 条件写入时使用条件请求；否则在有效锁内比较源码哈希。同一对象的源码片段共享对象级锁。预期版本不一致时不写入，返回 `VERSION_CONFLICT`。
+当前不使用 ETag 或 If-Match；revision 由连接 ID、源码 URI、active/inactive 版本及源码 SHA-256 生成，在锁内重读并校验。写入只支持 REPORT 主源码。预期版本不一致，或从 active revision 覆盖不同 inactive 草稿时，返回 VERSION_CONFLICT。
+
+保存后的读回比较忽略文本末尾连续 CR/LF，兼容 SAP 移除末尾换行；其他字符保持严格比较。revision 和 hash 始终基于后端实际文本生成。
 
 保存与语法检查分开：保存成功不等于语法通过，也不等于激活。锁释放在 finally 路径执行；解锁失败不能覆盖已经成功保存的事实。
 
 ### 8.3 语法检查与激活
 
-语法检查针对明确版本调用后端支持的检查能力，返回结构化诊断。激活是独立写操作，核对提交的 inactive revision，必要时在锁或后端等效一致性机制下执行。
+语法检查针对明确版本调用后端支持的检查能力，返回结构化诊断。激活是独立写操作：在编辑锁内核对 inactive revision，释放编辑锁后再次核对，再调用 SAP 激活接口，由激活接口获取所需锁。解锁失败或版本变化时不发出激活请求；激活成功后读回 active 源码进行验证。解锁到激活之间存在并发窗口，不承诺原子版本条件激活。
 
-多对象激活不承诺原子性。结果逐对象报告；激活失败保留后端实际状态。服务不激活与本次请求无关的全部 inactive 对象。版本一致性机制若后端不支持，应报告限制而不是假定无并发风险。
+多对象激活顺序执行，失败即停止；返回已完成结果和 failed_object_uri，不回滚先前对象。激活成功后读回比较也仅忽略末尾 CR/LF。服务不激活请求外的全部 inactive 对象，不承诺跨对象原子性。
 
 ## 9. 错误与恢复
 
 | 错误码 | 含义与恢复方式 |
 | --- | --- |
 | `AUTH_FAILED` | 更新本地凭据，再测试连接 |
-| `AUTHORIZATION_DENIED` | SAP 权限不足，返回脱敏的后端原因 |
+| `HTTP_FORBIDDEN` / `CSRF_FAILED` | HTTP 403 按后端错误消息分类，不能单凭 403 判断开发权限 |
 | `ADT_UNAVAILABLE` | 连接地址或 ADT 服务不可用 |
 | `CAPABILITY_UNSUPPORTED` | 当前后端不支持该操作 |
 | `WRITE_DISABLED` | 本地连接未启用写入 |
-| `PACKAGE_NOT_ALLOWED` | 对象所在包不在允许范围 |
-| `OBJECT_NOT_FOUND` / `OBJECT_EXISTS` | 读取不存在对象或创建冲突 |
-| `OBJECT_LOCKED` | 返回可获取的锁信息，不强制解锁 |
+| `OBJECT_NOT_FOUND` | HTTP 404；可能是对象不存在或接口路径不可用 |
+| `CREATE_VALIDATION_FAILED` | 创建前验证未通过；其他后端创建错误可能归入 ADT_ERROR |
+| `OBJECT_LOCKED` | HTTP 409/423 或识别为编辑锁的 403，不强制解锁 |
+| `VERSION_UNAVAILABLE` / `PACKAGE_UNKNOWN` | 无法取得指定版本或核实所属包 |
 | `VERSION_CONFLICT` | 重读目标版本，再生成修改 |
-| `TRANSPORT_REQUIRED` / `TRANSPORT_INVALID` | 提供有效传输任务 |
-| `SYNTAX_CHECK_FAILED` | 返回后端诊断，不自动撤销保存 |
+| `TRANSPORT_REQUIRED` | 创建或修改非 $TMP 包需要传输任务；无效任务由 SAP 拒绝 |
 | `ACTIVATION_FAILED` | 返回逐对象结果和实际完成阶段 |
 | `LOCK_CLEANUP_FAILED` | 明确主操作是否成功，并记录待清理锁 |
+| `SESSION_NEEDS_REVIEW` | 先前解锁失败或锁状态未知，阻止该连接后续写入 |
+| `VERIFY_FAILED` | 保存或激活后的读回源码与预期不一致 |
+| `LOG_UNAVAILABLE` | 写入前不能记录日志，不发出 SAP 写请求 |
+| `REQUEST_ID_CONFLICT` / `REQUEST_LIMIT` | 重复 ID 参数冲突，或内存请求索引已满 |
+| `BUSY` / `SERVER_STOPPING` | 操作队列已满或服务正在退出 |
+| `ADT_ERROR` | 未进一步分类的后端错误，原始响应不返回给 agent |
 | `OUTCOME_UNKNOWN` | 写请求超时或连接中断，读回核实后再决定重试 |
 
-写操作带客户端 `request_id`。服务在内存中维护请求摘要、执行状态和已确认结果，相同 ID 与不同参数冲突；同一运行周期内重复请求返回已确认结果，在途重复请求不得再次执行。该索引随进程退出清空，第一版不从日志重建重复请求索引。进程重启或网络中断后的未知结果必须查询 SAP 重新核实，不承诺跨 SAP 与本地记录的 exactly-once。
+写操作带客户端 `request_id`。服务在内存中维护请求摘要、执行状态和已确认结果，相同 ID 与不同参数冲突；同一运行周期内重复请求返回已确认结果，在途重复请求不得再次执行。该索引随进程退出清空，不从日志重建重复请求索引。进程重启或网络中断后的未知结果必须查询 SAP 重新核实，不承诺跨 SAP 与本地记录的 exactly-once。
 
 进程被强制终止时锁清理无法保证。操作记录应保留可用于核实的连接、对象、完成阶段和清理状态，不提供强制解锁或自动回滚工具。
 
 ## 10. 本地数据与操作记录
 
-非敏感连接配置为 JSON；第一版写操作记录使用 JSONL 日志文件，不引入数据库。建议存放在 `%LOCALAPPDATA%\sap-mcp\logs`，使用 UTF-8 编码，每行一个完整 JSON 对象。每个操作阶段追加一条事件，不修改已有行。事件包含 schema_version、operation_id、request_id、连接 ID、对象 URI、UTC 时间、事件类型、完成阶段、前后 revision 和错误类别；尚未取得的信息可以省略。
+非敏感连接配置为 JSON；写操作记录使用 JSONL 文件，不引入数据库。目录为 `%LOCALAPPDATA%\sap-mcp\logs`，可由 SAP_MCP_LOG_DIR 覆盖。每行一个 UTF-8 JSON 对象，阶段事件追加写入，不修改旧行。实际字段包括 schema_version、time（UTC）、operation_id、request_id、connection_id、event、completed_steps，以及可用的 tool、object_uri 或 error_code；当前不写前后 revision。创建和批量激活事件未逐项记录目标 URI，应结合返回结果核实。
 
-日志写入由单一队列串行处理，按日期和大小轮转。进程异常退出可能留下不完整的最后一行，读取时应忽略并报告该行。首个写操作事件无法记录时，在发出 SAP 写请求前返回日志错误；SAP 已执行后日志写入失败时，仍返回已知 SAP 结果并附加日志失败信息，不能把它当作可直接重试的 SAP 操作失败。
+日志由单一队列串行写入，按 UTC 日期和约 5 MiB 大小轮转，不自动删除历史文件。当前没有日志读取或重放命令；人工或外部工具读取时需处理异常退出留下的不完整末行。首个写操作事件无法记录时，在 SAP 写请求前返回日志错误；SAP 已执行后日志失败通过 LOG_WRITE_FAILED warning 返回，不覆盖已知 SAP 状态。
 
 JSONL 用于排查问题和人工核实操作阶段，不作为 SAP 状态的权威来源，也不用于跨重启的重复请求识别。重启后不自动重放写操作。需要持久化查询和跨重启的请求管理时，再评估 SQLite。
 
-默认不记录完整源码、密码或后端原始响应。源码缓存第一版可只存在内存，按连接、对象和版本隔离；修改后失效相关缓存。操作记录不是备份，历史版本恢复留待后续设计。
+默认不记录完整源码、密码或后端原始响应。当前没有独立源码缓存；每次 read_source 查询 SAP，内存保留客户端会话和重复写请求结果。操作记录不是备份，不提供历史版本恢复。
 
-## 11. 实现阶段与验收
+## 11. 测试
 
-### 阶段一：连接基础
+### 自动化测试
 
-实现 CLI、配置校验、Windows 凭据存储、HTTP ADT 连接和 discovery。通过真实系统只读测试确认网络、Client、语言、认证和能力。
+模拟测试覆盖 URL 与 URI 校验、MCP HTTP 客户端、认证与令牌撤销、ADT cookie/CSRF、源码读写、检查和激活、对象类型过滤、分类节点过滤、旧配置兼容、重复请求、版本冲突、传输任务要求、日志失败、锁清理和退出等待。运行方式：`npm test`。
 
-### 阶段二：只读 HTTP MCP
+### SAP 环境验证
 
-实现本机监听、令牌认证、协议初始化、连接列表、搜索、包浏览和源码读取。通过真实 MCP 客户端验证 tools/list 与 tools/call，同时验证错误凭据、无效 URI 和跨连接隔离。
+部署到 SAP 环境时，先测试连接与 discovery，再验证对象搜索、源码读取和包浏览。需要写入时，在测试包中验证创建、修改 inactive 源码、语法检查、激活和 active 源码读回。非 $TMP 包需要有效传输任务。
 
-### 阶段三：写入闭环
+### 取消与中断
 
-在指定测试包创建 REPORT，读取初始源码、修改 inactive 版本、检查语法、激活、读回 active 版本。验证锁冲突、版本冲突、传输任务错误、语法失败和激活失败。
+当前没有主动取消后端写入的实现；MCP 请求取消、网络断开或进程强制退出不保证 SAP 操作停止。未知结果必须查询 SAP。
 
-模拟后端验证写请求超时、读回确认、取消请求、解锁失败和进程退出；真实 SAP 验证后端媒体类型、锁会话和状态语义。未完成真实联调前，只能声明本地协议或模拟测试通过。
+## 12. 部署与后续验证
 
-## 12. 待确认事项
-
-- 测试系统 HTTP ADT URL、Client、用户名和语言；密码仅在本地输入。
-- SAP_BASIS 版本及 discovery 实际支持的功能。
-- 可读取的程序和允许创建 REPORT 的测试包。
-- 非 `$TMP` 包所需的有效传输任务与权限。
-- agent 客户端是否支持 Streamable HTTP 及 Bearer 请求头配置。
-- ADT 库在该系统上的 active/inactive、ETag、锁、检查和激活行为。
+- 新环境按连接名称配置 HTTP URL、Client、用户名与语言，密码在本地输入。
+- 客户端使用 127.0.0.1 的 MCP URL 与 Bearer 标头；不使用 localhost。
+- 更换系统或用户后，重新验证 discovery、主源码读取及需要的创建、修改、检查和激活流程。
+- 非 $TMP 包准备有效传输任务，具体权限与系统可修改状态由 SAP 决定。
+- 诊断位置映射与分页尚未实现，跨版本兼容性需在目标环境中验证。
 
 ## 13. 参考资料
 

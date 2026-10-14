@@ -8,8 +8,10 @@ export const connectionSchema = z.object({
   connection_id: z.string().uuid(), name: z.string().regex(/^[a-zA-Z0-9_-]+$/),
   base_url: z.string().transform(normalizeUrl), client: z.string().regex(/^\d{3}$/),
   username: z.string().min(1), language: z.string().regex(/^[A-Z]{2}$/),
-  write_enabled: z.boolean().default(false), allowed_packages: z.array(z.string().regex(/^[A-Z0-9_$/]+$/).max(128)).default([])
-}).strict().refine(c => !c.write_enabled || c.allowed_packages.length > 0, 'Writing requires allowed packages');
+  write_enabled: z.boolean().default(false),
+  // Accept the obsolete field so existing connections continue to load, but discard it.
+  allowed_packages: z.unknown().optional()
+}).strict().transform(({ allowed_packages: _legacy, ...connection }) => connection);
 export type Connection = z.infer<typeof connectionSchema>;
 const configSchema = z.object({ schema_version: z.literal(1), connections: z.array(connectionSchema),
   tokens: z.array(z.object({ id: z.string(), hash: z.string(), created_at: z.string() })) });
@@ -30,10 +32,10 @@ export class ConfigStore {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { schema_version: 1, connections: [], tokens: [] }; throw error; }
   }
   async save(config: Config) {
-    configSchema.parse(config);
+    const validated = configSchema.parse(config);
     await mkdir(this.directory, { recursive: true });
     const temp = join(this.directory, `${randomUUID()}.tmp`);
-    await writeFile(temp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+    await writeFile(temp, JSON.stringify(validated, null, 2) + '\n', { mode: 0o600 });
     await rename(temp, join(this.directory, 'config.json'));
   }
   async createToken() {
