@@ -2,9 +2,84 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { AdtBackend } from '../src/adt.js';
+import { AdtBackend, programUri } from '../src/adt.js';
 import { connectionSchema } from '../src/config.js';
 import { safeError } from '../src/errors.js';
+import { XMLParser } from 'fast-xml-parser';
+import type { ProgramKind } from '../src/adt.js';
+
+for (const kind of ['report', 'include', 'module_pool', 'subroutine_pool'] as ProgramKind[]) {
+  test(`create ${kind} sends escaped XML, transport and verifies metadata`, async () => {
+    const include = kind === 'include'; const collection = include ? 'includes' : 'programs';
+    const type = include ? 'PROG/I' : 'PROG/P'; const prefix = include ? 'include' : 'program';
+    const programType = { report: 'executableProgram', module_pool: 'modulePool', subroutine_pool: 'subroutinePool', include: '' }[kind];
+    const object = `/sap/bc/adt/programs/${collection}/zcreated`;
+    let creation: Record<string, string> | undefined; let validationType: string | null = null; let task: string | null = null;
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url!, 'http://local'); let body = ''; for await (const chunk of req) body += chunk;
+      res.setHeader('Content-Type', 'application/xml');
+      if (url.pathname.endsWith('/compatibility/graph')) { res.setHeader('x-csrf-token', 'test'); res.end('<graph/>'); }
+      else if (url.pathname.endsWith('/validation')) {
+        validationType = url.searchParams.get('objtype');
+        res.end('<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><SEVERITY>SUCCESS</SEVERITY><CHECK_RESULT>X</CHECK_RESULT></DATA></asx:values></asx:abap>');
+      } else if (url.pathname === `/sap/bc/adt/programs/${collection}` && req.method === 'POST') {
+        creation = new XMLParser({ ignoreAttributes: false }).parse(body)[`${prefix}:${include ? 'abapInclude' : 'abapProgram'}`];
+        task = url.searchParams.get('corrNr'); res.statusCode = 201; res.end();
+      } else if (url.pathname === object) res.end(`<${prefix}:${include ? 'abapInclude' : 'abapProgram'} xmlns:${prefix}="http://www.sap.com/adt/programs/${collection}" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="ZCREATED" adtcore:type="${type}" adtcore:version="inactive" ${include ? '' : `program:programType="${programType}"`}/>`);
+      else { res.end(''); }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address(); assert.ok(address && typeof address !== 'string');
+    const backend = new AdtBackend(connectionSchema.parse({ connection_id: randomUUID(), name: 'mock', base_url: `http://127.0.0.1:${address.port}`, client: '001', language: 'EN', username: 'TEST' }), 'fake');
+    try {
+      assert.equal(await backend.create('ZCREATED', 'A & "B" <C>', 'ZPACKAGE', 'DEVK900001', kind), object);
+      assert.equal(validationType, type); assert.equal(task, 'DEVK900001');
+      assert.ok(creation); assert.equal(creation['@_adtcore:type'], type);
+      assert.equal(creation['@_adtcore:description'], 'A & "B" <C>');
+      assert.equal(creation['@_program:programType'], include ? undefined : programType);
+    } finally { await backend.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+}
+
+test('writable URIs accept Program and Include main sources but reject other objects', () => {
+  for (const kind of ['programs', 'includes']) {
+    const uri = `/sap/bc/adt/programs/${kind}/ztest`;
+    assert.equal(programUri(uri), uri); assert.equal(programUri(`${uri}/source/main`), uri);
+  }
+  for (const uri of ['/sap/bc/adt/oo/classes/ztest', '/sap/bc/adt/programs/includes/ztest/source/other',
+    '/sap/bc/adt/programs/includes/../ztest']) assert.throws(() => programUri(uri));
+});
+
+for (const [kind, type, programType] of [['includes', 'PROG/I', 'include'], ['programs', 'PROG/P', 'modulePool'], ['programs', 'PROG/P', 'subroutinePool']]) {
+  test(`ADT ${type} ${programType} supports package lookup, locking, save and activation`, async () => {
+    const object = `/sap/bc/adt/programs/${kind}/ztest`;
+    let code = '* test source'; let saved = '';
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url!, 'http://local'); let body = ''; for await (const chunk of req) body += chunk;
+      res.setHeader('Content-Type', 'application/xml');
+      if (url.pathname.endsWith('/compatibility/graph')) { res.setHeader('x-csrf-token', 'test'); res.end('<graph/>'); }
+      else if (url.pathname.endsWith('/nodepath')) res.end(`<projectexplorer:nodepath xmlns:projectexplorer="test" xmlns:adtcore="http://www.sap.com/adt/core"><projectexplorer:objectLinkReferences><objectLinkReference adtcore:name="$TMP" adtcore:type="DEVC/K" adtcore:uri="/sap/bc/adt/packages/%24tmp"/></projectexplorer:objectLinkReferences></projectexplorer:nodepath>`);
+      else if (url.pathname === object && url.searchParams.get('_action') === 'LOCK') res.end('<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><LOCK_HANDLE>handle</LOCK_HANDLE></DATA></asx:values></asx:abap>');
+      else if (url.pathname === object && url.searchParams.get('_action') === 'UNLOCK') res.end('');
+      else if (url.pathname === object) res.end(`<program:abapProgram xmlns:program="http://www.sap.com/adt/programs/programs" xmlns:adtcore="http://www.sap.com/adt/core" xmlns:abapsource="http://www.sap.com/adt/abapsource" adtcore:name="ZTEST" adtcore:type="${type}" adtcore:version="${url.searchParams.get('version') ?? 'active'}" program:programType="${programType}" abapsource:sourceUri="source/main"/>`);
+      else if (url.pathname === `${object}/source/main` && req.method === 'PUT') { saved = body; res.statusCode = 204; res.end(); }
+      else if (url.pathname === `${object}/source/main`) { res.setHeader('Content-Type', 'text/plain'); res.end(url.searchParams.get('version') === 'inactive' ? saved : code); }
+      else if (url.pathname.endsWith('/activation')) { assert.ok(body.includes(object)); code = saved; res.statusCode = 204; res.end(); }
+      else res.end('');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address(); assert.ok(address && typeof address !== 'string');
+    const backend = new AdtBackend(connectionSchema.parse({ connection_id: randomUUID(), name: 'mock', base_url: `http://127.0.0.1:${address.port}`, client: '001', language: 'EN', username: 'TEST' }), 'fake');
+    try {
+      assert.equal(await backend.packageOf(object), '$TMP');
+      const original = await backend.read(object, 'active'); assert.equal(original.source_uri, `${object}/source/main`);
+      const handle = await backend.lock(object); await backend.save(original.source_uri, '* changed source', handle);
+      assert.equal((await backend.read(object, 'inactive')).source, '* changed source');
+      await backend.unlock(object, handle); assert.equal((await backend.activate(object)).success, true);
+      assert.equal((await backend.read(object, 'active')).source, '* changed source');
+    } finally { await backend.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+}
 
 test('403 classification distinguishes an editor lock from CSRF and unknown rejection', () => {
   assert.equal(safeError({ status: 403, message: '使用者 TEST 当前编辑 ZTEST005' }).code, 'OBJECT_LOCKED');

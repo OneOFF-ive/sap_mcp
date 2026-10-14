@@ -1,11 +1,14 @@
 import { ADTClient, session_types, type HttpClient } from 'abap-adt-api';
 import { HttpClientException, type HttpClientOptions } from 'abap-adt-api/build/AdtHTTP.js';
 import axios from 'axios';
+import { XMLBuilder } from 'fast-xml-parser';
 import type { Connection } from './config.js';
 import { digest } from './config.js';
 import { AppError } from './errors.js';
 
 export type Version = 'active' | 'inactive';
+export type ProgramKind = 'report' | 'include' | 'module_pool' | 'subroutine_pool';
+const programTypes = { report: 'executableProgram', module_pool: 'modulePool', subroutine_pool: 'subroutinePool' } as const;
 export function adtUri(uri: string): string {
   if (!uri.startsWith('/sap/bc/adt/') || /[?#\\\s]/.test(uri)) throw new AppError('INVALID_URI', 'Use an ADT relative object URI');
   let decoded: string;
@@ -17,8 +20,8 @@ export function adtUri(uri: string): string {
 }
 export function programUri(uri: string): string {
   adtUri(uri);
-  if (!/^\/sap\/bc\/adt\/programs\/programs\/[a-zA-Z0-9_%]+(?:\/source\/main)?$/.test(uri)) {
-    throw new AppError('CAPABILITY_UNSUPPORTED', 'First release writes REPORT program main sources only');
+  if (!/^\/sap\/bc\/adt\/programs\/(?:programs|includes)\/[a-zA-Z0-9_%]+(?:\/source\/main)?$/.test(uri)) {
+    throw new AppError('CAPABILITY_UNSUPPORTED', 'Writes support Program and Include main sources only');
   }
   return uri.replace(/\/source\/main$/, '');
 }
@@ -42,7 +45,7 @@ export interface Backend {
   lock(object: string): Promise<string>;
   unlock(object: string, handle: string): Promise<void>;
   save(source: string, code: string, handle: string, transport?: string): Promise<void>;
-  create(name: string, description: string, pkg: string, transport?: string): Promise<string>;
+  create(name: string, description: string, pkg: string, transport?: string, kind?: ProgramKind): Promise<string>;
   check(object: string, version: Version): Promise<unknown>;
   activate(object: string): Promise<{ success: boolean; messages: unknown[] }>;
   transports(): Promise<unknown>;
@@ -80,7 +83,7 @@ export class AdtBackend implements Backend {
     const discovery = await this.client.adtDiscovery();
     if (!discovery.length) throw new AppError('ADT_UNAVAILABLE', 'Backend did not return a usable ADT discovery document');
     return { discovery, probed_at: new Date().toISOString(),
-      limitations: ['Writes are limited to REPORT main sources', 'Source revision checks use hashes under SAP object locks'] };
+      limitations: ['Creation and writes support Programs and Includes; backend permissions and type support apply', 'Source revision checks use hashes under SAP object locks'] };
   }
   async search(query: string, type: string | undefined, limit: number) {
     const requestedType = type?.toUpperCase();
@@ -110,9 +113,11 @@ export class AdtBackend implements Backend {
     return sourceResult(this.connection.connection_id, object, sourceUri, await this.client.getObjectSource(sourceUri, { version }), version);
   }
   async packageOf(object: string) {
-    const metadata = await this.client.objectStructure(programUri(object));
-    if (!('program:programType' in metadata.metaData) || metadata.metaData['program:programType'] !== 'executableProgram') {
-      throw new AppError('CAPABILITY_UNSUPPORTED', 'Only executable REPORT programs are writable');
+    const objectUri = programUri(object);
+    const metadata = await this.client.objectStructure(objectUri);
+    const expectedType = objectUri.startsWith('/sap/bc/adt/programs/includes/') ? 'PROG/I' : 'PROG/P';
+    if (metadata.metaData['adtcore:type'] !== expectedType) {
+      throw new AppError('CAPABILITY_UNSUPPORTED', 'Object metadata does not match its Program or Include URI');
     }
     const path = await this.client.findObjectPath(adtUri(object));
     const pkg = [...path].reverse().find(p => p['adtcore:type'] === 'DEVC/K');
@@ -124,19 +129,32 @@ export class AdtBackend implements Backend {
   async save(source: string, code: string, handle: string, transport?: string) {
     programUri(source); await this.client.setObjectSource(source, code, handle, transport);
   }
-  async create(name: string, description: string, pkg: string, transport?: string) {
-    const validation = await this.client.validateNewObject({ objtype: 'PROG/P', objname: name, description, packagename: pkg });
+  async create(name: string, description: string, pkg: string, transport?: string, kind: ProgramKind = 'report') {
+    const include = kind === 'include';
+    const objectType = include ? 'PROG/I' : 'PROG/P';
+    const collection = include ? 'includes' : 'programs';
+    const prefix = include ? 'include' : 'program';
+    const validation = await this.client.validateNewObject({ objtype: objectType, objname: name, description, packagename: pkg });
     if (!validation.success) throw new AppError('CREATE_VALIDATION_FAILED', 'Backend rejected program creation', validation);
-    await this.client.createObject({ objtype: 'PROG/P', name, description, parentName: pkg,
-      parentPath: `/sap/bc/adt/packages/${encodeURIComponent(pkg.toLowerCase())}`, responsible: this.connection.username,
-      language: this.connection.language, transport });
-    const matches = await this.client.searchObject(name, 'PROG/P', 20);
-    const row = matches.find(r => r['adtcore:name'].toUpperCase() === name.toUpperCase());
-    if (!row) throw new AppError('OUTCOME_UNKNOWN', 'Program creation returned success but its URI could not be resolved');
-    const uri = adtUri(row['adtcore:uri']);
+    const root = `${prefix}:${include ? 'abapInclude' : 'abapProgram'}`;
+    const body = new XMLBuilder({ ignoreAttributes: false }).build({ [root]: {
+      [`@_xmlns:${prefix}`]: `http://www.sap.com/adt/programs/${collection}`,
+      '@_xmlns:adtcore': 'http://www.sap.com/adt/core', '@_adtcore:name': name,
+      '@_adtcore:type': objectType, '@_adtcore:description': description,
+      '@_adtcore:responsible': this.connection.username, '@_adtcore:language': this.connection.language,
+      '@_adtcore:masterLanguage': this.connection.language,
+      ...(!include ? { '@_program:programType': programTypes[kind] } : {}),
+      'adtcore:packageRef': { '@_adtcore:name': pkg }
+    } });
+    const uri = `/sap/bc/adt/programs/${collection}/${encodeURIComponent(name.toLowerCase())}`;
+    await this.client.httpClient.request(`/sap/bc/adt/programs/${collection}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/*' }, body,
+      ...(transport ? { qs: { corrNr: transport } } : {})
+    });
     const metadata = await this.client.objectStructure(uri, 'inactive');
-    if (!('program:programType' in metadata.metaData) || metadata.metaData['program:programType'] !== 'executableProgram') {
-      throw new AppError('CAPABILITY_UNSUPPORTED', 'Created object must be verified as an executable REPORT', { object_uri: uri });
+    if (metadata.metaData['adtcore:type'] !== objectType || (!include &&
+        (!('program:programType' in metadata.metaData) || metadata.metaData['program:programType'] !== programTypes[kind]))) {
+      throw new AppError('VERIFY_FAILED', 'Created object does not match the requested type', { object_uri: uri, program_kind: kind });
     }
     return uri;
   }

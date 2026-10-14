@@ -21,6 +21,7 @@ const schemas = {
   list_package_objects: z.object({ ...connection, package_name: pkg, limit }).strict(),
   read_source: z.object({ ...connection, object_uri: uri, source_uri: uri.optional(), version: version.default('active') }).strict(),
   create_program: z.object({ ...connection, name: z.string().regex(/^[ZY][A-Z0-9_]{0,29}$/),
+    program_kind: z.enum(['report', 'include', 'module_pool', 'subroutine_pool']).default('report'),
     description: z.string().min(1).max(60), package_name: pkg, transport_task: transport, request_id: requestId }).strict(),
   update_source: z.object({ ...connection, source_uri: uri, source: z.string().max(1024 * 1024),
     expected_revision: z.string().regex(/^[a-f0-9]{64}$/), transport_task: transport, request_id: requestId }).strict(),
@@ -35,10 +36,10 @@ const descriptions: Record<keyof typeof schemas, string> = {
   search_objects: 'Search SAP repository objects and return relative ADT object URIs.',
   list_package_objects: 'List package contents with a limit. Pagination is not supported in this release.',
   read_source: 'Read the exact active or inactive main source. Keep the revision for a later update.',
-  create_program: 'Create a REPORT shell in the specified package, subject to SAP permissions. Does not activate it. Do not blindly retry unknown results.',
-  update_source: 'Save program main source as inactive under lock with expected revision. Does not activate.',
+  create_program: 'Create a Program or Include shell. program_kind: report (default), include, module_pool or subroutine_pool. Subject to SAP support and permissions. Does not activate. Do not blindly retry unknown results.',
+  update_source: 'Save Program (PROG/P) or Include (PROG/I) main source as inactive under lock with expected revision. Does not activate.',
   syntax_check: 'Check the requested version and return backend diagnostics.',
-  activate_objects: 'Activate explicitly selected programs after checking inactive revisions. May partially succeed.',
+  activate_objects: 'Activate explicitly selected Programs or Includes after checking inactive revisions. May partially succeed.',
   list_transport_requests: 'List the configured SAP user transport requests and tasks.'
 };
 export function makeMcp(operations: Operations) {

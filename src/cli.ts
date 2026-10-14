@@ -2,27 +2,19 @@
 import { Command } from 'commander';
 import { input, password, confirm } from '@inquirer/prompts';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { ConfigStore, WindowsCredentials, connectionSchema, type Connection } from './config.js';
 import { AdtBackend } from './adt.js';
 import { Operations } from './operations.js';
 import { startHttp } from './server.js';
 import { safeError } from './errors.js';
+import { acquireLease } from './lease.js';
+import { startAdmin } from './admin.js';
 
 const store = new ConfigStore();
 const credentials = new WindowsCredentials();
 async function lease(filename = 'runtime.lock') {
-  await mkdir(store.directory, { recursive: true });
-  const path = join(store.directory, filename);
-  try { const pid = Number(await readFile(path, 'utf8'));
-    try { process.kill(pid, 0); throw new Error('Service or another configuration command is running'); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
-    await unlink(path);
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  const file = await open(path, 'wx');
-  await file.writeFile(String(process.pid)); await file.close();
-  return () => unlink(path);
+  return acquireLease(store.directory, filename);
 }
 async function mutate(action: () => Promise<void>, connectionChange = true) {
   const releaseRuntime = connectionChange ? await lease() : undefined;
@@ -91,6 +83,34 @@ token.command('revoke <id>').action(id => mutate(async () => {
   const config = await store.load(); if (!config.tokens.some(t => t.id === id)) throw new Error('Token not found');
   config.tokens = config.tokens.filter(t => t.id !== id); await store.save(config); console.log('Token revoked');
 }, false));
+cli.command('ui').description('Open the local management interface').option('--port <port>', 'Management port', '8766')
+  .option('--no-open', 'Do not launch a browser').action(async options => {
+    const port = Number(options.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port');
+    const release = await lease();
+    try {
+      const runtime = await startAdmin(store, credentials, port);
+      console.log(`SAP MCP management: http://127.0.0.1:${port}/`);
+      if (options.open && process.platform === 'win32') {
+        const browser = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+          "$ErrorActionPreference = 'Stop'; Start-Process -FilePath $env:SAP_MCP_BROWSER_URL"],
+          { windowsHide: true, cwd: process.env.SystemRoot ?? 'C:\\Windows', stdio: 'ignore',
+            env: { ...process.env, SAP_MCP_BROWSER_URL: runtime.url } });
+        let reported = false;
+        const failed = () => {
+          if (reported) return;
+          reported = true;
+          console.error('Automatic browser launch failed. Open the management session URL shown below.');
+        };
+        browser.on('error', failed);
+        browser.on('exit', code => { if (code !== 0) failed(); });
+      }
+      let closing = false;
+      const stop = async () => { if (closing) return; closing = true; try { await runtime.close(); } finally { await release(); } };
+      process.once('SIGINT', () => { void stop(); }); process.once('SIGTERM', () => { void stop(); });
+      console.log(`Management session URL: ${runtime.url}`);
+    } catch (error) { await release(); throw error; }
+  });
 cli.command('serve').option('--port <port>', 'Local port', '8765').action(async options => {
   const port = Number(options.port); if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port');
   if (!(await store.load()).tokens.length) throw new Error('Create a token before starting the service');

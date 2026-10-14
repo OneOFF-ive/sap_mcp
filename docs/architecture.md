@@ -4,23 +4,27 @@
 
 ## 1. 目标与范围
 
-构建不依赖 VS Code 的本地 CLI 应用，通过 HTTP ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。
+提供不依赖 VS Code 的本地 Web 管理界面与 CLI，通过 HTTP ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。
 
 当前功能包括：
 
 - 手动配置多个 SAP 连接，测试登录并探测 ADT 能力。
+- 本地 Web 管理界面、双击启动脚本、连接与令牌管理、MCP 服务启停。
 - HTTP MCP 服务及本地访问令牌认证。
 - 搜索对象、浏览包、读取源码。
-- 创建可执行 REPORT 程序、修改源码、语法检查和显式激活。
+- 创建 REPORT、Include、模块池和子程序池；修改与激活 Program（PROG/P）和 Include（PROG/I）的主源码，提供语法检查。
 - 对象锁、版本冲突、传输请求和部分失败处理。
 
-当前不提供桌面应用、Web 页面、stdio MCP、SAP GUI 配置解析、RFC、SAProuter、SNC/SSO、调试、任意 ABAP 执行、删除对象或释放传输请求。
+当前不提供桌面安装包、stdio MCP、SAP GUI 配置解析、RFC、SAProuter、SNC/SSO、调试、任意 ABAP 执行、删除对象或释放传输请求。
 
 ## 2. 总体架构
 
 ```mermaid
 flowchart LR
     CLI[CLI 配置与启停] --> Config[连接配置与凭据管理]
+    Browser[本机浏览器] --> Admin[Web 管理服务]
+    Admin --> Config
+    Admin --> Server
     CLI --> Server[HTTP MCP 服务]
     Agent[Agent MCP 客户端] --> Server
     Server --> Operations[ABAP 操作层]
@@ -38,6 +42,7 @@ flowchart LR
 | 模块 | 职责 |
 | --- | --- |
 | CLI | 交互输入、隐藏密码、配置管理、连通性测试、服务生命周期 |
+| Web 管理 | 静态 HTML/CSS/JS、独立管理认证、配置 API、MCP 启停 |
 | 配置与凭据 | 持久化非敏感配置，按连接 ID 访问 Windows 凭据管理器 |
 | MCP 层 | 协议协商、认证、参数验证、tools 注册、统一结果转换 |
 | ABAP 操作层 | 对象语义、写入策略、版本校验、错误分类、操作记录 |
@@ -60,6 +65,8 @@ SAP 连接使用 HTTP ADT。`base_url` 不含用户名、密码、查询参数�
 
 配置存放在 `%APPDATA%\sap-mcp\config.json`，含 `schema_version=1`，可由 `SAP_MCP_CONFIG_DIR` 覆盖。连接没有 credential_ref 字段，直接按 connection_id 访问 Windows 凭据管理器。配置更新采用临时文件加 rename；删除连接时清理凭据。CLI 使用 runtime.lock 禁止服务运行期间添加、编辑或删除连接，config.lock 串行化配置变更；服务运行时可管理令牌。
 
+UI 进程同样持有 runtime.lock，避免另一个 CLI 服务同时操作该配置目录。Web 管理操作串行化并使用 config.lock；MCP 已停止时可在 UI 内变更连接。编辑时变更 URL、Client 或用户名必须重新输入密码，保存失败时尽力恢复原凭据。
+
 HTTP Basic 凭据和代码流量没有 TLS 加密，应在可信网络内使用。HTTP 客户端不向其他 origin 转发认证信息。
 
 ## 4. CLI 设计
@@ -78,12 +85,15 @@ HTTP Basic 凭据和代码流量没有 TLS 加密，应在可信网络内使用�
 | `sap-mcp token create` | 生成高熵 MCP 令牌，明文仅输出一次 |
 | `sap-mcp token revoke <令牌ID>` | 撤销指定令牌 |
 | `sap-mcp serve --port 8765` | 前台启动服务，固定监听 127.0.0.1 |
+| `sap-mcp ui --port 8766` | 启动管理界面并打开默认浏览器，MCP 由页面控制启停 |
 
 连接测试按唯一名称选取配置，登录并输出 discovery 和探测时间，结束后退出会话。它是只读操作，不通过创建程序测试权限。错误分类以当前 errors.ts 为准，不把所有 HTTP 403 都解释为权限不足。成功读取不代表具有写入权限。
 
 密码不接受命令行明文参数。凭据存储失败必须报告，不回退到配置文件明文存储。首次版本要求 Windows 凭据管理器可用。
 
 ## 5. MCP HTTP 服务
+
+Web 管理端口独立于 MCP，默认监听 127.0.0.1:8766。启动生成随机管理密钥，经浏览器 URL fragment 传入后移至标签页 sessionStorage；API 用 X-Admin-Token 校验，不接受 MCP Bearer 作为管理认证。API 要求正确 Host、变更请求要求同源 Origin，没有跨域许可；最多 8 个在途请求，JSON 请求体上限 16 KiB。静态页面不含管理密钥，CSP 禁止外部脚本和嵌入，所有响应禁用缓存。
 
 - 端点：`http://127.0.0.1:8765/mcp`，端口可配置。
 - 传输：Streamable HTTP，使用官方 SDK，支持初始化及协议版本协商。
@@ -109,7 +119,7 @@ HTTP Basic 凭据和代码流量没有 TLS 加密，应在可信网络内使用�
 | `search_objects` | 连接、`query`、可选类型、`limit` | 名称、类型、包、对象 URI、是否截断 |
 | `list_package_objects` | 连接、`package_name`、`limit` | 后端节点字段、truncated、pagination_supported=false |
 | `read_source` | 连接、`object_uri`、可选 `source_uri`、`version` | 源码、源码 URI、实际版本、revision、哈希 |
-| `create_program` | 连接、`name`、`description`、`package_name`、可选 `transport_task`、`request_id` | 对象 URI、创建状态 |
+| `create_program` | 连接、`name`、`description`、`package_name`、`program_kind`（默认 report）、可选 `transport_task`、`request_id` | 对象 URI、program_kind、创建状态 |
 | `update_source` | 连接、`source_uri`、`source`、`expected_revision`、可选 `transport_task`、`request_id` | 保存状态、新 revision、inactive 状态 |
 | `syntax_check` | 连接、`object_uri`、`version` | 是否通过、结构化诊断 |
 | `activate_objects` | 连接、对象 URI 与预期 revision 列表、`request_id` | 各对象结果及部分失败信息 |
@@ -129,7 +139,7 @@ HTTP Basic 凭据和代码流量没有 TLS 加密，应在可信网络内使用�
 
 连接首次使用时创建 ADT 客户端，HTTP 请求按需登录。get_capabilities 获取 discovery，其他 tools 不强制先调用该 tool。客户端实例在进程内按连接缓存，cookie、CSRF token 和认证状态按连接隔离。
 
-ADT 库处理媒体类型和各操作接口；读取通过对象元数据发现主源码，程序写入通过元数据验证 executableProgram。discovery 用于能力展示，尚未实现按 discovery 自动禁用 tools。锁操作使用 stateful SAP 会话；同一连接的所有操作串行执行，不同连接使用独立队列。
+ADT 库处理媒体类型和各操作接口；读取通过对象元数据发现主源码，写入核对 programs/programs 路径对应 PROG/P、programs/includes 路径对应 PROG/I，不限制已有 Program 的 programType 为 executableProgram。创建时使用 XMLBuilder 构建请求，显式传递选定类型并读回验证。discovery 用于能力展示，尚未实现按 discovery 自动禁用 tools。锁操作使用 stateful SAP 会话；同一连接的所有操作串行执行，不同连接使用独立队列。
 
 CSRF 获取和更新由适配器处理。只有明确尚未执行的请求才可安全重试；网络超时不能直接解释为写入失败。若会话失效发生在持锁期间，先核实操作结果和锁状态，不自动换会话继续写入。
 
@@ -137,7 +147,9 @@ CSRF 获取和更新由适配器处理。只有明确尚未执行的请求才可
 
 ### 8.1 创建程序
 
-创建工具生成可执行 REPORT 的对象壳。创建、写入源码和激活是独立操作。
+创建工具根据 program_kind 生成对象壳：report 对应 PROG/P 的 executableProgram，module_pool 对应 modulePool，subroutine_pool 对应 subroutinePool，include 对应 PROG/I。默认 report，兼容未指定类型的调用。创建、写入源码和激活是独立操作。
+
+先通过 ADT 库进行命名和包验证，再发送结构化 XML 到 programs/programs 或 programs/includes 集合；Program 的 program:programType 明确指定。创建后按对象路径读取元数据验证 adtcore:type 和 Program 子类型。SAP 拒绝或类型不符时返回错误，不自动回滚已创建对象。模块池屏幕等附属资源不由此工具创建。
 
 验证连接写入策略、命名、目标包、对象不存在及传输任务，再通过 ADT 创建对象，返回真实 URI。远程创建存在竞态，以 SAP 返回为准。`$TMP` 是否无需传输任务由后端确认；其他包要求有效任务，服务不自动创建或释放传输请求。
 
@@ -155,7 +167,7 @@ CSRF 获取和更新由适配器处理。只有明确尚未执行的请求才可
 → 返回已完成步骤与最终状态
 ```
 
-当前不使用 ETag 或 If-Match；revision 由连接 ID、源码 URI、active/inactive 版本及源码 SHA-256 生成，在锁内重读并校验。写入只支持 REPORT 主源码。预期版本不一致，或从 active revision 覆盖不同 inactive 草稿时，返回 VERSION_CONFLICT。
+当前不使用 ETag 或 If-Match；revision 由连接 ID、源码 URI、active/inactive 版本及源码 SHA-256 生成，在锁内重读并校验。写入支持 Program 和 Include 的 source/main，其他对象和源码片段不在支持范围。预期版本不一致，或从 active revision 覆盖不同 inactive 草稿时，返回 VERSION_CONFLICT。
 
 保存后的读回比较忽略文本末尾连续 CR/LF，兼容 SAP 移除末尾换行；其他字符保持严格比较。revision 和 hash 始终基于后端实际文本生成。
 

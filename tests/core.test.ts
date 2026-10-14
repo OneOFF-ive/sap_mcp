@@ -354,6 +354,34 @@ test('fresh session read failure and cached write failure are never automaticall
     assert.equal(result.status, 'error'); assert.equal(attempts, 1); assert.equal(created, 2);
   } finally { await ops.close(); await f.cleanup(); }
 });
+test('Include source uses the same guarded update and activation workflow', async () => {
+  const f = await fixture();
+  try {
+    const uri = '/sap/bc/adt/programs/includes/zinclude';
+    const original = await f.backend.read(uri, 'active');
+    const updated = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      source_uri: `${uri}/source/main`, source: '* include change', expected_revision: original.revision, request_id: 'include-save' });
+    assert.equal(updated.status, 'success'); assert.equal(f.backend.saves, 1); assert.equal(f.backend.unlocks, 1);
+    const saved = await f.backend.read(uri, 'inactive');
+    const activated = await f.operations.run('activate_objects', { connection_id: f.connection.connection_id,
+      objects: [{ object_uri: uri, expected_revision: saved.revision }], request_id: 'include-activate' });
+    assert.equal(activated.status, 'success'); assert.equal(f.backend.active, '* include change');
+    assert.equal(f.backend.unlocks, 2);
+  } finally { await f.cleanup(); }
+});
+test('create tool forwards selected program kind and preserves the REPORT default', async () => {
+  const f = await fixture(); const kinds: unknown[] = [];
+  f.backend.create = async (...args: unknown[]) => { kinds.push(args[4]); return object; };
+  try {
+    const base = { connection_id: f.connection.connection_id, name: 'ZTEST', description: 'Test', package_name: '$TMP' };
+    const defaultResult = await f.operations.run('create_program', { ...base, request_id: 'default-kind' });
+    const includeResult = await f.operations.run('create_program', { ...base, program_kind: 'include', request_id: 'include-kind' });
+    assert.deepEqual(kinds, ['report', 'include']);
+    assert.equal((defaultResult.data as { program_kind: string }).program_kind, 'report');
+    assert.equal((includeResult.data as { program_kind: string }).program_kind, 'include');
+  } finally { await f.cleanup(); }
+});
+
 test('request cache omits large source and rejects new writes at capacity without evicting old IDs', async () => {
   const f = await fixture();
   const ops = new Operations(f.store, credentials, new AuditLog(f.logDirectory), () => f.backend, 1);

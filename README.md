@@ -1,8 +1,8 @@
 # SAP MCP
 
-Windows CLI + Streamable HTTP MCP 服务，通过 HTTP ADT 访问 SAP ABAP，不依赖 VS Code、SAP GUI 或数据库。
+Windows 本地 Web 管理界面 + Streamable HTTP MCP 服务，通过 HTTP ADT 访问 SAP ABAP，不依赖 VS Code、SAP GUI 或数据库；同时保留 CLI。
 
-支持多连接管理、对象搜索、源码读取，以及可执行 REPORT 程序的创建、修改、语法检查和激活。写入默认关闭，可按连接启用。
+支持多连接管理、对象搜索、源码读取、Program 与 Include 创建，以及 Program（PROG/P）与 Include（PROG/I）主源码的修改、语法检查和激活。写入默认关闭，可按连接启用。
 
 ## 环境与安装
 
@@ -22,7 +22,27 @@ npm start -- --help
 
 以下示例直接使用 `npm`，命令需在项目目录中执行。
 
-## 配置与启动
+## 图形界面启动
+
+安装 Node.js 22 或更新版本后，双击项目根目录的 `start-ui.cmd`。脚本会在缺少依赖时安装依赖、构建项目，然后打开本地管理界面。保持启动窗口开启，关闭窗口会结束服务进程。
+
+管理界面默认使用 `http://127.0.0.1:8766/`，提供系统连接的添加、编辑、删除与测试，连接写入开关，MCP 令牌创建与撤销，以及 MCP 服务启停。MCP 默认端口仍为 8765，可在界面中设置。
+
+启动时浏览器自动获得独立的管理会话凭据；只输入裸地址会显示未授权。管理会话保存在当前标签页的 sessionStorage，页面 URL 中的会话片段会立即移除。令牌明文仅在创建窗口中显示，关闭窗口后清空；管理凭据和 MCP Bearer 令牌互不通用。
+
+先添加系统连接并测试，再创建 MCP 令牌，然后在 MCP 服务页启动服务。停止 MCP 后可编辑连接，管理界面仍可使用。管理界面不提供程序编辑或 SAP 业务执行。
+
+也可通过命令启动：
+
+```powershell
+npm start -- ui
+```
+
+已有 CLI 服务运行时，请先停止它再启动图形界面。UI 与 CLI 共用连接配置和凭据，不能同时拥有同一配置目录的运行锁。关闭浏览器不会自动停止 MCP；通过页面停止 MCP，或在启动窗口按 Ctrl+C 退出整个管理进程。
+
+高级选项：`ui --port <管理端口>` 修改管理端口；`ui --no-open` 不自动打开浏览器，并在终端输出含会话凭据的管理地址，请勿分享该地址。
+
+## CLI 配置与启动
 
 ```powershell
 npm start -- connection add <连接名称>
@@ -46,7 +66,7 @@ npm start -- serve --port 8765
 
 客户端 URL 必须使用 `127.0.0.1`，不能替换为 `localhost`：当前 Host 校验会拒绝后者。未提供有效令牌返回 401，Host 不匹配或携带 Origin 返回 403。
 
-`serve` 在前台运行，用 Ctrl+C 停止。服务运行期间不能添加、编辑或删除 SAP 连接；令牌可创建或撤销，撤销立即影响后续请求。浏览器 Origin 请求全部拒绝，服务仅供本机 MCP 客户端访问。
+`serve` 在前台运行，用 Ctrl+C 停止。CLI 服务运行期间不能添加、编辑或删除 SAP 连接；令牌可创建或撤销，撤销立即影响后续请求。MCP 端点拒绝浏览器 Origin 请求。独立 Web 管理端口仅允许本机、同源且经过管理认证的 API 调用。
 
 ```powershell
 npm start -- connection edit <连接名称>
@@ -60,7 +80,7 @@ npm start -- token revoke <令牌ID>
 
 添加或编辑连接时，`Enable program writes?` 决定该连接的 `write_enabled`。默认关闭；关闭时仍可读取、搜索、浏览、语法检查和查询传输请求，但服务端拒绝创建、修改和激活。启用后由 SAP 检查用户权限、锁、系统可修改状态及传输任务。
 
-没有单独的读取开关，也没有按令牌区分读写或系统的权限。所有有效 MCP 令牌都能访问已配置连接，并受连接写入开关及 SAP 权限约束。agent 不能通过 tools 修改本地权限设置。修改连接需停止服务，完成后重启。
+没有单独的读取开关，也没有按令牌区分读写或系统的权限。所有有效 MCP 令牌都能访问已配置连接，并受连接写入开关及 SAP 权限约束。agent 不能通过 tools 修改本地权限设置。Web 界面编辑连接前停止 MCP，编辑后重新启动；CLI 编辑前退出运行进程。
 
 ## Tools 与工作流程
 
@@ -89,6 +109,23 @@ npm start -- token revoke <令牌ID>
 
 创建名称仅允许 Z/Y 开头的大写程序名，长度不超过 30。创建时指定目标包，不需要在连接配置中预先登记。旧配置中的 `allowed_packages` 字段加载时自动忽略，再次保存配置时移除，无需重新添加连接。已有 inactive 草稿时，不能从 active revision 直接覆盖，应先读取 inactive。源码版本使用连接、URI、版本与内容哈希生成，并在 SAP 对象锁内重新核对。
 
+修改支持 `/sap/bc/adt/programs/programs/<名称>/source/main` 与 `/sap/bc/adt/programs/includes/<名称>/source/main`，包括已有模块池等非 REPORT Program。服务检查对象元数据类型与路径一致，并遵循 SAP 权限、锁和传输任务要求。Include 语法或激活依赖主程序上下文时，以 SAP 后端诊断为准；服务不自动激活未指定的父程序。
+
+`create_program` 的 `program_kind` 可选 `report`（默认）、`include`、`module_pool` 或 `subroutine_pool`。创建后读回元数据核对所选类型，仅创建对象壳，不自动写入业务源码或激活。模块池的屏幕、GUI 状态等资源需要另外维护，本工具不生成。实际类型支持由目标 SAP 决定；创建后的核对失败不自动删除对象，应检查返回的对象 URI 或通过搜索确认。
+
+例如创建 Include：
+
+```json
+{
+  "connection_id": "由 list_connections 返回的 UUID",
+  "name": "ZEXAMPLE_INCLUDE",
+  "description": "Example include",
+  "package_name": "$TMP",
+  "program_kind": "include",
+  "request_id": "create-example-include-001"
+}
+```
+
 重复 `request_id` 在本次服务运行期间返回原操作的精简结果，不重复执行；源码不保留在重复请求缓存中，需要时使用 `read_source` 获取。缓存最多 512 条，每条序列化结果不超过 32 KiB，超大的附加详情省略并返回 `CACHED_DETAILS_OMITTED`。缓存满时拒绝新的写请求，不淘汰旧 ID；确认在途操作后可重启服务。修改参数需使用新 ID。结果 `unknown` 时必须查询 SAP，不直接重试。锁清理失败后，该连接的后续写入会被阻止，需核实 SAP 锁状态后再重启。
 
 保存和激活后的源码读回比较允许 SAP 移除末尾换行，其他字符差异仍报 `VERIFY_FAILED`；revision 使用后端实际返回文本计算，不忽略换行。激活列表最多 20 个对象，顺序处理，失败即停止，不回滚先前已完成对象。
@@ -110,6 +147,8 @@ npm test
 ```
 
 测试使用模拟 SAP，覆盖官方 MCP HTTP 客户端、认证、URL 限制、ADT cookie/CSRF、源码读写、检查与激活，以及重复请求、版本冲突、传输任务要求、旧配置兼容、日志失败和解锁失败。
+
+Web 管理接口测试覆盖独立认证、跨站请求拒绝、密码与配置管理、令牌撤销以及服务生命周期。可选浏览器检查使用 Playwright，构建后运行 `node scripts/browser-check.mjs`；通过 `PLAYWRIGHT_MODULE`、`BROWSER_EXECUTABLE` 指定已有 Playwright 模块和浏览器。该检查使用独立临时配置和模拟 SAP，截图输出到忽略目录 `.sap-mcp/browser-check`。
 
 包浏览不实现分页。语法诊断位置仍保留后端原始 line 和 offset，`position_format` 标明后端原生格式，没有统一转换成 1-based 行列。客户端取消或断开连接不保证 SAP 操作停止，应通过读回核实；应用没有实现主动取消后端写入。更换 SAP 系统或用户后，应重新进行连接与工作流程验证。
 

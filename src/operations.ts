@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { AdtBackend, adtUri, programUri, sameSavedSource, type Backend, type Version } from './adt.js';
+import { AdtBackend, adtUri, programUri, sameSavedSource, type Backend, type Version, type ProgramKind } from './adt.js';
 import { ConfigStore, digest, type Connection, type Credentials } from './config.js';
 import { AuditLog } from './audit.js';
 import { AppError, safeError } from './errors.js';
@@ -8,6 +8,7 @@ export type Input = {
   connection_id?: string; query?: string; type?: string; limit?: number; package_name?: string;
   object_uri?: string; source_uri?: string; version?: Version; source?: string; expected_revision?: string;
   name?: string; description?: string; transport_task?: string; request_id?: string;
+  program_kind?: ProgramKind;
   objects?: { object_uri: string; expected_revision: string }[];
 };
 export type Result = { operation_id: string; status: string; completed_steps: string[]; data?: unknown;
@@ -161,10 +162,10 @@ export class Operations {
         this.requireTransport(p.package_name!, p.transport_task);
         await ctx.event('started');
         ctx.dispatched = true;
-        const uri = await b.create(p.name!, p.description!, p.package_name!, p.transport_task);
+        const uri = await b.create(p.name!, p.description!, p.package_name!, p.transport_task, p.program_kind ?? 'report');
         ctx.confirmed = true;
         await ctx.event('created');
-        return { object_uri: uri, activated: false };
+        return { object_uri: uri, program_kind: p.program_kind ?? 'report', activated: false };
       }
       case 'update_source': {
         const object = programUri(p.source_uri!);
@@ -180,7 +181,7 @@ export class Operations {
           let current = active;
           if (!active || active.revision !== p.expected_revision) current = await b.read(object, 'inactive');
           if (!current || current.revision !== p.expected_revision) throw new AppError('VERSION_CONFLICT', 'Source changed; read it again');
-          if (current.source_uri !== p.source_uri) throw new AppError('INVALID_URI', 'Source is not the program main source');
+          if (current.source_uri !== p.source_uri) throw new AppError('INVALID_URI', 'Source is not the discovered Program or Include main source');
           // An inactive draft must not be silently overwritten from an active revision.
           if (current.version === 'active') {
             const draft = await b.read(object, 'inactive').catch(error => {
