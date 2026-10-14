@@ -261,6 +261,96 @@ test('shutdown waits for queued operations and prevents new work', async () => {
     assert.equal((await pending).status, 'success'); await closing;
   } finally { await f.cleanup(); }
 });
+
+test('failed cached read session is recreated once and the read succeeds', async () => {
+  const f = await fixture();
+  let created = 0;
+  const ops = new Operations(f.store, credentials, new AuditLog(f.logDirectory), () => {
+    created++;
+    const b = new FakeBackend(f.connection.connection_id);
+    if (created === 1) {
+      let reads = 0;
+      const read = b.read.bind(b);
+      b.read = async (uri, version) => {
+        if (++reads > 1) throw new AppError('ADT_ERROR', 'Stale stateful session');
+        return read(uri, version);
+      };
+    }
+    return b;
+  });
+  try {
+    const args = { connection_id: f.connection.connection_id, object_uri: object, version: 'active' as const };
+    assert.equal((await ops.run('read_source', args)).status, 'success');
+    const recovered = await ops.run('read_source', args);
+    assert.equal(recovered.status, 'success'); assert.ok(recovered.completed_steps.includes('session_recreated'));
+    assert.equal(created, 2);
+  } finally { await ops.close(); await f.cleanup(); }
+});
+
+test('writes replace cached sessions and validate the new session before dispatch', async () => {
+  const f = await fixture();
+  const events: string[] = [];
+  let created = 0;
+  const ops = new Operations(f.store, credentials, new AuditLog(f.logDirectory), () => {
+    const number = ++created;
+    const b = new FakeBackend(f.connection.connection_id);
+    b.close = async () => { events.push(`close-${number}`); };
+    b.capabilities = async () => {
+      events.push(`check-${number}`);
+      if (number === 1) throw new AppError('AUTH_FAILED', 'Cached session expired');
+      return { available: true };
+    };
+    b.create = async () => { events.push(`create-${number}`); return object; };
+    return b;
+  });
+  try {
+    await ops.run('read_source', { connection_id: f.connection.connection_id, object_uri: object });
+    const args = { connection_id: f.connection.connection_id, name: 'ZTEST', description: 'Test', package_name: '$TMP', request_id: 'fresh-write' };
+    const result = await ops.run('create_program', args);
+    assert.equal(result.status, 'success'); assert.equal(result.write_dispatched, true);
+    assert.deepEqual(events, ['close-1', 'check-2', 'create-2']);
+    assert.ok(result.completed_steps.includes('write_session_ready'));
+    assert.deepEqual(await ops.run('create_program', args), result); assert.equal(created, 2);
+  } finally { await ops.close(); await f.cleanup(); }
+});
+
+test('failed write preflight sends no mutation or lock and its failed session is discarded', async () => {
+  const f = await fixture();
+  let created = 0;
+  const ops = new Operations(f.store, credentials, new AuditLog(f.logDirectory), () => {
+    created++;
+    if (created === 1) f.backend.capabilities = async () => { throw new AppError('AUTH_FAILED', 'Login failed'); };
+    else f.backend.capabilities = async () => ({ available: true });
+    return f.backend;
+  });
+  try {
+    const args = { connection_id: f.connection.connection_id, source_uri: source, source: 'REPORT ztest. WRITE 1.',
+      expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'preflight-failed' };
+    const result = await ops.run('update_source', args);
+    assert.equal(result.error?.code, 'AUTH_FAILED'); assert.equal(result.write_dispatched, false);
+    assert.equal(f.backend.saves, 0); assert.equal(f.backend.locks, 0);
+    assert.equal((await ops.run('update_source', { ...args, request_id: 'explicit-new-attempt' })).status, 'success');
+    assert.equal(created, 2); assert.equal(f.backend.saves, 1);
+  } finally { await ops.close(); await f.cleanup(); }
+});
+
+test('fresh session read failure and cached write failure are never automatically replayed', async () => {
+  const f = await fixture();
+  let created = 0;
+  const ops = new Operations(f.store, credentials, new AuditLog(f.logDirectory), () => {
+    created++; return f.backend;
+  });
+  try {
+    f.backend.read = async () => { throw new AppError('ADT_ERROR', 'Read failed'); };
+    assert.equal((await ops.run('read_source', { connection_id: f.connection.connection_id, object_uri: object })).status, 'error');
+    assert.equal(created, 1);
+    let attempts = 0;
+    f.backend.create = async () => { attempts++; throw new AppError('ADT_ERROR', 'Write failed'); };
+    const result = await ops.run('create_program', { connection_id: f.connection.connection_id, name: 'ZTEST',
+      description: 'Test', package_name: '$TMP', request_id: 'no-write-replay' });
+    assert.equal(result.status, 'error'); assert.equal(attempts, 1); assert.equal(created, 2);
+  } finally { await ops.close(); await f.cleanup(); }
+});
 test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP rejects bad auth/origin', async () => {
   const f = await fixture();
   const token = await f.store.createToken(); const runtime = await startHttp(f.store, f.operations, 0);

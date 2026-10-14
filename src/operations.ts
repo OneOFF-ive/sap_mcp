@@ -11,10 +11,11 @@ export type Input = {
   objects?: { object_uri: string; expected_revision: string }[];
 };
 export type Result = { operation_id: string; status: string; completed_steps: string[]; data?: unknown;
-  outcome?: string; error?: ReturnType<typeof safeError>; warnings?: string[] };
+  outcome?: string; write_dispatched?: boolean; error?: ReturnType<typeof safeError>; warnings?: string[] };
 type Context = { steps: string[]; dispatched: boolean; confirmed: boolean; warnings: string[]; event: (phase: string) => Promise<void> };
 export type BackendFactory = (c: Connection, password: string) => Backend;
 const writes = new Set(['create_program', 'update_source', 'activate_objects']);
+const recoverableSessionErrors = new Set(['AUTH_FAILED', 'CSRF_FAILED', 'HTTP_FORBIDDEN', 'ADT_ERROR', 'OUTCOME_UNKNOWN']);
 
 export class Operations {
   private sessions = new Map<string, Backend>();
@@ -68,14 +69,46 @@ export class Operations {
       if (!connection) throw new AppError('CONNECTION_NOT_FOUND', 'Unknown connection ID');
       if (writes.has(tool) && !connection.write_enabled) throw new AppError('WRITE_DISABLED', 'Enable writes in local connection settings first');
       let backend = this.sessions.get(connection.connection_id);
+      const cachedSession = Boolean(backend);
       if (!backend) {
         backend = this.factory(connection, await this.credentials.get(connection.connection_id));
         this.sessions.set(connection.connection_id, backend);
       }
       if (writes.has(tool) && this.poisoned.has(backend)) throw new AppError('SESSION_NEEDS_REVIEW', 'Previous lock cleanup failed; verify SAP locks before restarting the service');
-      const data = await this.dispatch(tool, input, connection, backend, ctx);
+      if (writes.has(tool)) {
+        // Connection queues ensure no other operation is using the session during replacement.
+        if (cachedSession) {
+          this.sessions.delete(connection.connection_id);
+          await backend.close().catch(() => {});
+          backend = this.factory(connection, await this.credentials.get(connection.connection_id));
+          this.sessions.set(connection.connection_id, backend);
+        }
+        ctx.steps.push('write_session_check_started');
+        try {
+          await backend.capabilities();
+          ctx.steps.push('write_session_ready');
+        } catch (error) {
+          this.sessions.delete(connection.connection_id);
+          await backend.close().catch(() => {});
+          throw error;
+        }
+      }
+      let data: unknown;
+      try {
+        data = await this.dispatch(tool, input, connection, backend, ctx);
+      } catch (error) {
+        // Retry only read operations, once, on a previously cached and unlocked session.
+        if (writes.has(tool) || !cachedSession || this.poisoned.has(backend) ||
+            !recoverableSessionErrors.has(safeError(error).code)) throw error;
+        await backend.close().catch(() => {});
+        this.sessions.delete(connection.connection_id);
+        backend = this.factory(connection, await this.credentials.get(connection.connection_id));
+        this.sessions.set(connection.connection_id, backend);
+        ctx.steps.push('session_recreated');
+        data = await this.dispatch(tool, input, connection, backend, ctx);
+      }
       return { operation_id: id, status: 'success', completed_steps: ctx.steps, data,
-        ...(writes.has(tool) ? { outcome: 'confirmed' } : {}), ...(ctx.warnings.length ? { warnings: ctx.warnings } : {}) };
+        ...(writes.has(tool) ? { outcome: 'confirmed', write_dispatched: ctx.dispatched } : {}), ...(ctx.warnings.length ? { warnings: ctx.warnings } : {}) };
     } catch (error) {
       const failure = safeError(error);
       if (writes.has(tool)) {
@@ -83,7 +116,7 @@ export class Operations {
           event: 'failed', completed_steps: ctx.steps, error_code: failure.code }); } catch { ctx.warnings.push('LOG_WRITE_FAILED'); }
       }
       return { operation_id: id, status: 'error', completed_steps: ctx.steps, error: failure,
-        ...(writes.has(tool) ? { outcome: ctx.confirmed ? 'partial' : ctx.dispatched ? 'unknown' : 'confirmed' } : {}),
+        ...(writes.has(tool) ? { outcome: ctx.confirmed ? 'partial' : ctx.dispatched ? 'unknown' : 'confirmed', write_dispatched: ctx.dispatched } : {}),
         ...(ctx.warnings.length ? { warnings: ctx.warnings } : {}) };
     }
   }

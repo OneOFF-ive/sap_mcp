@@ -125,6 +125,8 @@ HTTP Basic 凭据和代码流量没有 TLS 加密，应在可信网络内使用�
 
 ## 7. SAP 会话与能力
 
+新写请求在业务操作前替换缓存且锁状态正常的会话，建立新会话并验证 ADT discovery。预检失败时不加锁、不发送业务写请求；预检成功也不能保证后续网络始终可用，因此进入写入阶段后不自动重放。锁状态异常时阻止写入，不能靠重建会话绕过。结果通过 write_dispatched 明确是否尝试提交业务变更。
+
 连接首次使用时创建 ADT 客户端，HTTP 请求按需登录。get_capabilities 获取 discovery，其他 tools 不强制先调用该 tool。客户端实例在进程内按连接缓存，cookie、CSRF token 和认证状态按连接隔离。
 
 ADT 库处理媒体类型和各操作接口；读取通过对象元数据发现主源码，程序写入通过元数据验证 executableProgram。discovery 用于能力展示，尚未实现按 discovery 自动禁用 tools。锁操作使用 stateful SAP 会话；同一连接的所有操作串行执行，不同连接使用独立队列。
