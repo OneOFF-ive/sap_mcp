@@ -219,3 +219,40 @@ test('SAP authentication failures are classified without exposing response data'
     const result = safeError(error); assert.equal(result.code, 'AUTH_FAILED'); assert.equal(JSON.stringify(result).includes('secret'), false); return true;
   }); } finally { await backend.close().catch(() => {}); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test('inactive version probes use a separate stateless session without invalidating a module lock', async () => {
+  const object = '/sap/bc/adt/functions/groups/zgroup/fmodules/zmodule';
+  let saved = false; let statelessProbe = false;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url!, 'http://local');
+    res.setHeader('Content-Type', 'application/xml');
+    if (url.pathname.endsWith('/compatibility/graph')) {
+      res.setHeader('x-csrf-token', 'test');
+      res.setHeader('Set-Cookie', 'SAP_SESSIONID_TEST=initial; Path=/'); res.end('<graph/>');
+    } else if (url.searchParams.get('_action') === 'LOCK') {
+      res.end('<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><LOCK_HANDLE>module-lock</LOCK_HANDLE></DATA></asx:values></asx:abap>');
+    } else if (url.searchParams.get('_action') === 'UNLOCK') {
+      res.end('');
+    } else if (url.pathname === object) {
+      statelessProbe = req.headers['x-sap-adt-sessiontype'] === 'stateless';
+      res.statusCode = 404;
+      res.setHeader('Set-Cookie', 'SAP_SESSIONID_TEST=refreshed; Path=/');
+      res.end('<exc:exception xmlns:exc="test"><type id="NotFound"/><message>Inactive version missing</message></exc:exception>');
+    } else if (req.method === 'PUT') {
+      saved = statelessProbe && req.headers.cookie?.includes('SAP_SESSIONID_TEST=initial') === true &&
+        url.searchParams.get('lockHandle') === 'module-lock';
+      res.statusCode = saved ? 204 : 423; res.end();
+    } else res.end('');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const backend = new AdtBackend(connectionSchema.parse({ connection_id: randomUUID(), name: 'mock',
+    base_url: `http://127.0.0.1:${address.port}`, client: '001', language: 'EN', username: 'TEST' }), 'fake');
+  try {
+    const handle = await backend.lock(object);
+    await assert.rejects(backend.read(object, 'inactive'), error => safeError(error).code === 'OBJECT_NOT_FOUND');
+    await backend.save(`${object}/source/main`, 'FUNCTION zmodule. ENDFUNCTION.', handle);
+    assert.equal(saved, true);
+    await backend.unlock(object, handle);
+  } finally { await backend.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});

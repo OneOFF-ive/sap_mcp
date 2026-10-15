@@ -3,15 +3,14 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { AppError } from './errors.js';
 
 export const connectionSchema = z.object({
   connection_id: z.string().uuid(), name: z.string().regex(/^[a-zA-Z0-9_-]+$/),
   base_url: z.string().transform(normalizeUrl), client: z.string().regex(/^\d{3}$/),
   username: z.string().min(1), language: z.string().regex(/^[A-Z]{2}$/),
   write_enabled: z.boolean().default(false),
-  // Accept the obsolete field so existing connections continue to load, but discard it.
-  allowed_packages: z.unknown().optional()
-}).strict().transform(({ allowed_packages: _legacy, ...connection }) => connection);
+}).strict();
 export type Connection = z.infer<typeof connectionSchema>;
 const configSchema = z.object({ schema_version: z.literal(1), connections: z.array(connectionSchema),
   tokens: z.array(z.object({ id: z.string(), hash: z.string(), created_at: z.string() })) });
@@ -29,7 +28,16 @@ export class ConfigStore {
   constructor(public directory = process.env.SAP_MCP_CONFIG_DIR ?? join(process.env.APPDATA ?? homedir(), 'sap-mcp')) {}
   async load(): Promise<Config> {
     try { return configSchema.parse(JSON.parse(await readFile(join(this.directory, 'config.json'), 'utf8'))); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { schema_version: 1, connections: [], tokens: [] }; throw error; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { schema_version: 1, connections: [], tokens: [] };
+      if (error instanceof z.ZodError || error instanceof SyntaxError) {
+        const legacy = error instanceof z.ZodError && error.issues.some(issue => issue.code === 'unrecognized_keys' && issue.keys.includes('allowed_packages'));
+        throw new AppError('CONFIG_INVALID', legacy
+          ? '本地 config.json 包含已废弃的 allowed_packages 字段，请删除该字段后重试；连接不限制包。'
+          : '本地 config.json 格式无效，请检查配置文件；这不是连接表单的格式错误。');
+      }
+      throw error;
+    }
   }
   async save(config: Config) {
     const validated = configSchema.parse(config);

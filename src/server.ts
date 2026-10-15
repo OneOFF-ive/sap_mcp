@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { ConfigStore } from './config.js';
 import { Operations, type Input } from './operations.js';
 import { safeError } from './errors.js';
+import { functionModuleSyntaxHelp } from './function-help.js';
 
 const id = z.string().uuid();
 const connection = { connection_id: id };
@@ -23,30 +24,46 @@ const schemas = {
   create_program: z.object({ ...connection, name: z.string().regex(/^[ZY][A-Z0-9_]{0,29}$/),
     program_kind: z.enum(['report', 'include', 'module_pool', 'subroutine_pool']).default('report'),
     description: z.string().min(1).max(60), package_name: pkg, transport_task: transport, request_id: requestId }).strict(),
-  update_source: z.object({ ...connection, source_uri: uri, source: z.string().max(1024 * 1024),
-    expected_revision: z.string().regex(/^[a-f0-9]{64}$/), transport_task: transport, request_id: requestId }).strict(),
+  create_function_group: z.object({ ...connection, name: z.string().regex(/^[ZY][A-Z0-9_]{0,25}$/),
+    description: z.string().min(1).max(60), package_name: pkg, transport_task: transport, request_id: requestId }).strict(),
+  create_function_module: z.object({ ...connection, name: z.string().regex(/^[ZY][A-Z0-9_]{0,29}$/),
+    description: z.string().min(1).max(60), function_group_uri: uri, transport_task: transport, request_id: requestId }).strict(),
+  list_function_group_members: z.object({ ...connection, function_group_uri: uri, limit }).strict(),
+  get_function_group: z.object({ ...connection, function_group_uri: uri }).strict(),
+  update_source: z.object({ ...connection, object_uri: uri.optional(), source_uri: uri.optional(), source: z.string().max(1024 * 1024),
+    expected_revision: z.string().regex(/^[a-f0-9]{64}$/), transport_task: transport, request_id: requestId }).strict()
+    .refine(p => Boolean(p.object_uri || p.source_uri), { message: 'Provide object_uri or source_uri' }),
   syntax_check: z.object({ ...connection, object_uri: uri, version: version.default('inactive') }).strict(),
   activate_objects: z.object({ ...connection, objects: z.array(z.object({ object_uri: uri,
     expected_revision: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).min(1).max(20), request_id: requestId }).strict(),
   list_transport_requests: z.object(connection).strict()
 };
 const descriptions: Record<keyof typeof schemas, string> = {
-  list_connections: 'List locally configured SAP connections and write policies.',
+  list_connections: 'List configured SAP connections with Client, language, username, backend URL and write policy. Confirm the intended system and Client before writing.',
   get_capabilities: 'Probe ADT discovery. A capability does not imply write authorization.',
   search_objects: 'Search SAP repository objects and return relative ADT object URIs.',
   list_package_objects: 'List package contents with a limit. Pagination is not supported in this release.',
   read_source: 'Read the exact active or inactive main source. Keep the revision for a later update.',
-  create_program: 'Create a Program or Include shell. program_kind: report (default), include, module_pool or subroutine_pool. Subject to SAP support and permissions. Does not activate. Do not blindly retry unknown results.',
-  update_source: 'Save Program (PROG/P) or Include (PROG/I) main source as inactive under lock with expected revision. Does not activate.',
+  create_program: 'Create a Program or Include shell. program_kind: report (default), include, module_pool or subroutine_pool. Subject to SAP support and permissions. Does not activate. Follow returned next_action to read the source URI and revision discovered by SAP; do not construct source paths. Do not blindly retry unknown results.',
+  create_function_group: 'Create a function group (FUGR/F) shell in a package. Does not activate. Follow next_action to obtain its snapshot; groups have no main source.',
+  create_function_module: 'Create an empty function module (FUGR/FF) in an existing function group, under its group lock. Interface parameters are not configured. Does not activate. Follow next_action to read the source URI and revision discovered by SAP; do not construct source paths.',
+  list_function_group_members: 'List function modules and Includes of a function group, excluding category nodes.',
+  get_function_group: 'Snapshot function group members and source revisions for group activation. Pass the returned revision to activate_objects for the group. Rejects groups exceeding 500 members.',
+  update_source: 'Save Program, Include, function module or group Include main source with expected revision. Does not activate. Inspect source_save even on errors: saved=true means SAP accepted the save, not that content verification passed; unknown requires reading backend state. Read inactive before retrying VERIFY_FAILED, and do not use its revision to blindly overwrite. Function modules use their own lock and ADT source-based declarations: TABLES T_RETURN TYPE BAPIRET2 OPTIONAL, not legacy STRUCTURE or Local Interface comments. EXCEPTIONS lists names only, e.g. INVALID_INPUT., never INVALID_INPUT = 1 (that is CALL FUNCTION syntax). End the definition with a period. Definition comments may be lost; implementation comments must not start with reserved prefixes *" or *"---. SAP may normalize the definition.',
   syntax_check: 'Check the requested version and return backend diagnostics.',
-  activate_objects: 'Activate explicitly selected Programs or Includes after checking inactive revisions. May partially succeed.',
+  activate_objects: 'Activate selected source objects with inactive revisions, or a function group with the revision from get_function_group. Group activation affects its members. May partially succeed.',
   list_transport_requests: 'List the configured SAP user transport requests and tasks.'
 };
 export function makeMcp(operations: Operations) {
   const server = new McpServer({ name: 'sap-mcp', version: '0.1.0' });
   for (const name of Object.keys(schemas) as (keyof typeof schemas)[]) {
-    const write = ['create_program', 'update_source', 'activate_objects'].includes(name);
-    server.registerTool(name, { description: descriptions[name], inputSchema: schemas[name],
+    const write = ['create_program', 'create_function_group', 'create_function_module', 'update_source', 'activate_objects'].includes(name);
+    const description = name === 'update_source'
+      ? 'Provide object_uri or the source_uri returned by read_source (both must match if supplied). The main source URI is discovered under lock; expected_revision from read_source is still required. Supported function definitions permit token-equivalent formatting only; see source_save.normalization_applied, difference and warnings for definition comment changes. Unknown grammar falls back to strict verification; implementation comparison is unchanged. ' + descriptions[name]
+      : descriptions[name];
+    const guidance = name === 'create_function_module' || name === 'update_source' ? ' ' + functionModuleSyntaxHelp
+      : name === 'read_source' ? ' If inactive returns VERSION_UNAVAILABLE, follow error.details.next_action to explicitly read active and obtain its revision. This is not proof of activation; no silent version fallback occurs.' : '';
+    server.registerTool(name, { description: description + guidance, inputSchema: schemas[name],
       annotations: { readOnlyHint: !write, destructiveHint: write, idempotentHint: !write, openWorldHint: true }
     }, async (args: Input) => {
       try {

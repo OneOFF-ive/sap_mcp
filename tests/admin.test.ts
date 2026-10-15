@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { ConfigStore, type Credentials } from '../src/config.js';
@@ -31,6 +31,14 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.equal((await fetch(`${origin}/api/state`, { headers: { 'X-Admin-Token': key, Origin: 'http://evil.test' } })).status, 403);
     assert.equal((await fetch(`${origin}/api/tokens`, { method: 'POST', headers: { 'X-Admin-Token': key } })).status, 403);
     const draft = { name: 'test_system', base_url: 'http://sap.test:8000', client: '001', username: 'TEST', language: 'EN', write_enabled: false, password: 'synthetic-secret' };
+    const initial = await store.load();
+    await writeFile(join(directory, 'config.json'), JSON.stringify({ ...initial, connections: [{ ...draft,
+      password: undefined, connection_id: '01234567-89ab-4def-8123-456789abcdef', allowed_packages: ['$TMP'] }] }));
+    const invalidConfig = await api('connections', 'POST', draft);
+    assert.equal(invalidConfig.body.error.code, 'CONFIG_INVALID');
+    assert.ok(invalidConfig.body.error.message.includes('allowed_packages'));
+    assert.equal(passwords.size, 0);
+    await store.save(initial);
     const created = await api('connections', 'POST', draft); assert.equal(created.status, 200);
     const id = created.body.connection_id; assert.ok(id); assert.equal(created.body.password, undefined);
     assert.equal(passwords.get(id), draft.password);

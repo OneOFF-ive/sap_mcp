@@ -1,21 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import { AdtBackend, adtUri, programUri, sameSavedSource, type Backend, type Version, type ProgramKind } from './adt.js';
+import { AdtBackend, adtUri, programUri, functionGroupUri, isFunctionGroup, compareSavedSource, savedSourceHash, definitionCommentsHash, type Backend, type Version, type ProgramKind } from './adt.js';
 import { ConfigStore, digest, type Connection, type Credentials } from './config.js';
 import { AuditLog } from './audit.js';
 import { AppError, safeError } from './errors.js';
+import { functionModuleGuidance } from './function-help.js';
 
 export type Input = {
   connection_id?: string; query?: string; type?: string; limit?: number; package_name?: string;
   object_uri?: string; source_uri?: string; version?: Version; source?: string; expected_revision?: string;
   name?: string; description?: string; transport_task?: string; request_id?: string;
   program_kind?: ProgramKind;
+  function_group_uri?: string;
   objects?: { object_uri: string; expected_revision: string }[];
 };
-export type Result = { operation_id: string; status: string; completed_steps: string[]; data?: unknown;
+type SourceSaveState = { saved: boolean | 'unknown'; verification: 'not_run' | 'pending' | 'passed' | 'failed' | 'unavailable'; object_uri: string; source_uri?: string; inactive_revision?: string; next_action?: string; normalization_applied?: boolean; difference?: string };
+export type Result = { operation_id: string; status: string; completed_steps: string[]; data?: unknown; source_save?: SourceSaveState;
   outcome?: string; write_dispatched?: boolean; error?: ReturnType<typeof safeError>; warnings?: string[] };
-type Context = { steps: string[]; dispatched: boolean; confirmed: boolean; warnings: string[]; event: (phase: string) => Promise<void> };
+type Context = { steps: string[]; dispatched: boolean; confirmed: boolean; warnings: string[]; source_save?: SourceSaveState; event: (phase: string) => Promise<void> };
 export type BackendFactory = (c: Connection, password: string) => Backend;
-const writes = new Set(['create_program', 'update_source', 'activate_objects']);
+const writes = new Set(['create_program', 'create_function_group', 'create_function_module', 'update_source', 'activate_objects']);
 const recoverableSessionErrors = new Set(['AUTH_FAILED', 'CSRF_FAILED', 'HTTP_FORBIDDEN', 'ADT_ERROR', 'OUTCOME_UNKNOWN']);
 const cachedResultLimit = 32 * 1024;
 function cacheResult(result: Result): Result {
@@ -74,7 +77,8 @@ export class Operations {
     try {
       const config = await this.store.load();
       if (tool === 'list_connections') return { operation_id: id, status: 'success', completed_steps: [], data:
-        config.connections.map(c => ({ connection_id: c.connection_id, name: c.name, write_enabled: c.write_enabled })) };
+        config.connections.map(c => ({ connection_id: c.connection_id, name: c.name, base_url: c.base_url,
+          client: c.client, language: c.language, username: c.username, write_enabled: c.write_enabled })) };
       const connection = config.connections.find(c => c.connection_id === input.connection_id);
       if (!connection) throw new AppError('CONNECTION_NOT_FOUND', 'Unknown connection ID');
       if (writes.has(tool) && !connection.write_enabled) throw new AppError('WRITE_DISABLED', 'Enable writes in local connection settings first');
@@ -117,15 +121,31 @@ export class Operations {
         ctx.steps.push('session_recreated');
         data = await this.dispatch(tool, input, connection, backend, ctx);
       }
-      return { operation_id: id, status: 'success', completed_steps: ctx.steps, data,
+      return { operation_id: id, status: 'success', completed_steps: ctx.steps, data, ...(ctx.source_save ? { source_save: ctx.source_save } : {}),
         ...(writes.has(tool) ? { outcome: 'confirmed', write_dispatched: ctx.dispatched } : {}), ...(ctx.warnings.length ? { warnings: ctx.warnings } : {}) };
     } catch (error) {
       const failure = safeError(error);
+      const details = failure.details as Record<string, unknown> | undefined;
+      if (tool === 'read_source' && input.version === 'inactive' && failure.code === 'VERSION_UNAVAILABLE') {
+        failure.details = { ...details, requested_version: 'inactive', object_uri: input.object_uri,
+          guidance: 'The requested inactive version is unavailable. This can be normal for an activated object; it does not by itself prove activation success. Explicitly read active to obtain its source and revision. Review that source before using its revision in update_source; do not blindly overwrite. No version fallback was performed.',
+          next_action: { tool: 'read_source', arguments: { connection_id: input.connection_id,
+            object_uri: input.object_uri, version: 'active' } } };
+      }
+      if (tool === 'update_source' && (input.object_uri ?? input.source_uri)?.includes('/fmodules/') &&
+          details?.http_status === 400 && details.sap_error_type === 'ExceptionResourceScanDuringSaveFailure') {
+        failure.details = { ...details, hints: [
+          'Check the FUNCTION definition, not CALL FUNCTION syntax: EXCEPTIONS lists names only (e.g. INVALID_INPUT.), never name = 1.',
+          'Use ADT parameter typing, e.g. TABLES T_RETURN TYPE BAPIRET2 OPTIONAL. End the definition with a period.',
+          'Definition comments may be regenerated; do not use reserved implementation comment prefixes *" or *"---. These are possible causes, not a definitive diagnosis.',
+          'Read inactive and active source before retrying with a new request_id; do not assume the backend is unchanged.'
+        ] };
+      }
       if (writes.has(tool)) {
         try { await this.audit.append({ operation_id: id, request_id: input.request_id, connection_id: input.connection_id,
           event: 'failed', completed_steps: ctx.steps, error_code: failure.code }); } catch { ctx.warnings.push('LOG_WRITE_FAILED'); }
       }
-      return { operation_id: id, status: 'error', completed_steps: ctx.steps, error: failure,
+      return { operation_id: id, status: 'error', completed_steps: ctx.steps, error: failure, ...(ctx.source_save ? { source_save: ctx.source_save } : {}),
         ...(writes.has(tool) ? { outcome: ctx.confirmed ? 'partial' : ctx.dispatched ? 'unknown' : 'confirmed', write_dispatched: ctx.dispatched } : {}),
         ...(ctx.warnings.length ? { warnings: ctx.warnings } : {}) };
     }
@@ -158,6 +178,38 @@ export class Operations {
       case 'read_source': return b.read(adtUri(p.object_uri!), p.version ?? 'active', p.source_uri);
       case 'syntax_check': return b.check(adtUri(p.object_uri!), p.version ?? 'inactive');
       case 'list_transport_requests': return b.transports();
+      case 'list_function_group_members': {
+        if (!b.listFunctionGroupMembers) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function group browsing unavailable');
+        return b.listFunctionGroupMembers(p.function_group_uri!, p.limit ?? 100);
+      }
+      case 'get_function_group': {
+        if (!b.functionGroupSnapshot) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function group snapshots unavailable');
+        return b.functionGroupSnapshot(p.function_group_uri!);
+      }
+      case 'create_function_group': {
+        if (!b.createFunctionGroup) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function group creation unavailable');
+        this.requireTransport(p.package_name!, p.transport_task);
+        await ctx.event('started'); ctx.dispatched = true;
+        const uri = await b.createFunctionGroup(p.name!, p.description!, p.package_name!, p.transport_task);
+        ctx.confirmed = true; await ctx.event('created');
+        return { object_uri: uri, type: 'FUGR/F', activated: false,
+          next_action: { tool: 'get_function_group', arguments: { connection_id: c.connection_id, function_group_uri: uri } } };
+      }
+      case 'create_function_module': {
+        if (!b.createFunctionModule) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function module creation unavailable');
+        const group = functionGroupUri(p.function_group_uri!);
+        if (group !== p.function_group_uri) throw new AppError('INVALID_URI', 'Specify the parent function group itself');
+        this.requireTransport(await b.packageOf(group), p.transport_task);
+        await ctx.event('started');
+        return this.locked(b, group, ctx, async () => {
+          ctx.dispatched = true;
+          const uri = await b.createFunctionModule!(p.name!, p.description!, group, p.transport_task);
+          ctx.confirmed = true; await ctx.event('created');
+          return { object_uri: uri, function_group_uri: group, type: 'FUGR/FF', activated: false,
+            interface_help: functionModuleGuidance(p.name!),
+            next_action: { tool: 'read_source', arguments: { connection_id: c.connection_id, object_uri: uri, version: 'inactive' } } };
+        });
+      }
       case 'create_program': {
         this.requireTransport(p.package_name!, p.transport_task);
         await ctx.event('started');
@@ -165,10 +217,17 @@ export class Operations {
         const uri = await b.create(p.name!, p.description!, p.package_name!, p.transport_task, p.program_kind ?? 'report');
         ctx.confirmed = true;
         await ctx.event('created');
-        return { object_uri: uri, program_kind: p.program_kind ?? 'report', activated: false };
+        return { object_uri: uri, program_kind: p.program_kind ?? 'report', activated: false,
+          next_action: { tool: 'read_source', arguments: { connection_id: c.connection_id, object_uri: uri, version: 'inactive' } } };
       }
       case 'update_source': {
-        const object = programUri(p.source_uri!);
+        if (!p.object_uri && !p.source_uri) throw new AppError('INVALID_URI', 'Provide object_uri or the source_uri returned by read_source');
+        const object = programUri(p.object_uri ?? p.source_uri!);
+        if (p.object_uri && object !== p.object_uri) throw new AppError('INVALID_URI', 'object_uri must identify the object, not its source');
+        if (p.source_uri && programUri(p.source_uri) !== object) throw new AppError('INVALID_URI', 'object_uri and source_uri identify different objects');
+        const saveState: SourceSaveState = { saved: false, verification: 'not_run', object_uri: object, ...(p.source_uri ? { source_uri: p.source_uri } : {}) };
+        ctx.source_save = saveState;
+        if (isFunctionGroup(object)) throw new AppError('CAPABILITY_UNSUPPORTED', 'Edit a function module or group Include, not the function group container');
         this.requireTransport(await b.packageOf(object), p.transport_task);
         await ctx.event('started');
         return this.locked(b, object, ctx, async handle => {
@@ -179,24 +238,50 @@ export class Operations {
             throw error;
           });
           let current = active;
-          if (!active || active.revision !== p.expected_revision) current = await b.read(object, 'inactive');
-          if (!current || current.revision !== p.expected_revision) throw new AppError('VERSION_CONFLICT', 'Source changed; read it again');
-          if (current.source_uri !== p.source_uri) throw new AppError('INVALID_URI', 'Source is not the discovered Program or Include main source');
+          if (!active || active.revision !== p.expected_revision) current = await b.read(object, 'inactive').catch(error => {
+            if (['OBJECT_NOT_FOUND', 'VERSION_UNAVAILABLE'].includes(safeError(error).code)) return undefined;
+            throw error;
+          });
+          const conflict = (reason: string, latest = current) => new AppError('VERSION_CONFLICT', reason, {
+            object_uri: object, ...(active ? { active_revision: active.revision } : {}),
+            ...(latest?.version === 'inactive' ? { inactive_revision: latest.revision } : {}),
+            next_action: { tool: 'read_source', arguments: { connection_id: c.connection_id, object_uri: object, version: latest?.version ?? active?.version ?? 'inactive' } },
+            guidance: 'Read and review current source before using its revision. Do not blindly overwrite or automatically retry.'
+          });
+          if (!current || current.revision !== p.expected_revision) throw conflict('Source changed; read it again');
+          if (p.source_uri && current.source_uri !== p.source_uri) throw new AppError('INVALID_URI', 'Source is not the discovered main source');
+          saveState.source_uri = current.source_uri;
           // An inactive draft must not be silently overwritten from an active revision.
           if (current.version === 'active') {
             const draft = await b.read(object, 'inactive').catch(error => {
               if (['OBJECT_NOT_FOUND', 'VERSION_UNAVAILABLE'].includes(safeError(error).code)) return undefined;
               throw error;
             });
-            if (draft && draft.hash !== current.hash) throw new AppError('VERSION_CONFLICT', 'An inactive draft exists; read inactive before editing');
+            if (draft && draft.hash !== current.hash) throw conflict('An inactive draft exists; read inactive before editing', draft);
           }
           await ctx.event('version_checked');
           ctx.dispatched = true;
-          await b.save(p.source_uri!, p.source!, handle, p.transport_task);
+          saveState.saved = 'unknown';
+          saveState.next_action = 'Read inactive and active source to establish backend state before any new write; do not blindly retry.';
+          await b.save(current.source_uri, p.source!, handle, p.transport_task);
           ctx.confirmed = true;
+          saveState.saved = true;
+          saveState.verification = 'pending';
           await ctx.event('saved');
-          const saved = await b.read(object, 'inactive');
-          if (!sameSavedSource(saved.source, p.source!)) throw new AppError('VERIFY_FAILED', 'Saved source differs from the submitted source');
+          let saved;
+          try { saved = await b.read(object, 'inactive'); }
+          catch (error) { saveState.verification = 'unavailable'; throw error; }
+          saveState.inactive_revision = saved.revision;
+          const comparison = compareSavedSource(p.source!, saved.source, object);
+          saveState.normalization_applied = comparison.normalization_applied;
+          ctx.warnings.push(...comparison.warnings);
+          if (!comparison.equivalent) {
+            saveState.verification = 'failed';
+            saveState.difference = comparison.difference;
+            throw new AppError('VERIFY_FAILED', 'SAP accepted the save, but inactive source differs from the submitted source. Read inactive before editing or activating.', { difference: comparison.difference });
+          }
+          saveState.verification = 'passed';
+          delete saveState.next_action;
           await ctx.event('verified');
           return { ...saved, activated: false };
         });
@@ -208,6 +293,30 @@ export class Operations {
         for (const o of p.objects!) {
           const uri = programUri(o.object_uri);
           try {
+          if (isFunctionGroup(uri)) {
+            if (!b.functionGroupSnapshot) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function group snapshots unavailable');
+            const snapshot = await this.locked(b, uri, ctx, async () => {
+              const snapshot = await b.functionGroupSnapshot!(uri);
+              if (snapshot.revision !== o.expected_revision) throw new AppError('VERSION_CONFLICT', 'Function group members changed');
+              return snapshot;
+            });
+            if (this.poisoned.has(b)) throw new AppError('LOCK_CLEANUP_FAILED', 'Group editor lock was not released');
+            if ((await b.functionGroupSnapshot(uri)).revision !== snapshot.revision) throw new AppError('VERSION_CONFLICT', 'Function group changed after unlocking');
+            await ctx.event('activation_version_checked'); ctx.dispatched = true; ctx.confirmed = false;
+            const activated = await b.activate(uri, snapshot); ctx.confirmed = true;
+            await ctx.event(activated.success ? 'activated' : 'activation_failed');
+            results.push({ object_uri: uri, ...activated });
+            if (!activated.success) throw new AppError('ACTIVATION_FAILED', 'Function group activation failed', { results });
+            for (const member of snapshot.members) {
+              const active = await b.read(member.object_uri, 'active');
+              if (savedSourceHash(active.source, member.object_uri) !== member.hash) throw new AppError('VERIFY_FAILED', 'Function group member differs after activation', { object_uri: member.object_uri });
+              if (member.definition_comments_hash && definitionCommentsHash(active.source, member.object_uri) !== member.definition_comments_hash) {
+                ctx.warnings.push('FUNCTION_DEFINITION_COMMENTS_CHANGED');
+              }
+            }
+            await ctx.event('activation_verified');
+            continue;
+          }
           const source = await this.locked(b, uri, ctx, async () => {
             const source = await b.read(uri, 'inactive');
             if (source.revision !== o.expected_revision) throw new AppError('VERSION_CONFLICT', 'Inactive source changed; read it again');
@@ -225,7 +334,9 @@ export class Operations {
             await ctx.event(result.success ? 'activated' : 'activation_failed');
             if (result.success) {
               const active = await b.read(uri, 'active');
-              if (!sameSavedSource(active.source, source.source)) throw new AppError('VERIFY_FAILED', 'Active source differs after activation');
+              const comparison = compareSavedSource(source.source, active.source, uri);
+              ctx.warnings.push(...comparison.warnings);
+              if (!comparison.equivalent) throw new AppError('VERIFY_FAILED', 'Active source differs after activation', { difference: comparison.difference });
               await ctx.event('activation_verified');
             }
           results.push({ object_uri: uri, ...result });

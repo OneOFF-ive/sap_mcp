@@ -10,17 +10,27 @@ import { AuditLog } from '../src/audit.js';
 import { adtUri, sameSavedSource, sourceResult, type Backend, type Version } from '../src/adt.js';
 import { Operations } from '../src/operations.js';
 import { AppError } from '../src/errors.js';
+import { AdtErrorException } from 'abap-adt-api';
 import { startHttp } from '../src/server.js';
 
 const object = '/sap/bc/adt/programs/programs/ztest';
 const source = `${object}/source/main`;
 const credentials: Credentials = { get: async () => 'fake', set: async () => {}, remove: async () => {} };
-test('save comparison ignores only final line breaks, not content or whitespace', () => {
+test('save comparison ignores blank lines but preserves nonblank content and literal data', () => {
   assert.equal(sameSavedSource('REPORT ztest.\r\n', 'REPORT ztest.'), true);
   assert.equal(sameSavedSource('REPORT ztest.\n\n', 'REPORT ztest.\r\n'), true);
   assert.equal(sameSavedSource('REPORT ztest. ', 'REPORT ztest.'), false);
   assert.equal(sameSavedSource('REPORT ztest.\n* comment', 'REPORT ztest.* comment'), false);
   assert.equal(sameSavedSource('WRITE 1.', 'WRITE 2.'), false);
+  assert.equal(sameSavedSource('\nREPORT ztest.\n\t \nWRITE 1.\n', 'REPORT ztest.\r\nWRITE 1.'), true);
+  assert.equal(sameSavedSource('WRITE 1.\nWRITE 2.', 'WRITE 2.\nWRITE 1.'), false);
+  assert.equal(sameSavedSource('  WRITE 1.', 'WRITE 1.'), false);
+  assert.equal(sameSavedSource('* comment\nWRITE 1.', 'WRITE 1.'), false);
+  assert.equal(sameSavedSource('DATA(text) = |first\n\nlast|.', 'DATA(text) = |first\nlast|.'), false);
+  assert.equal(sameSavedSource('WRITE |a\\|b|.\n\nWRITE 1.', 'WRITE |a\\|b|.\nWRITE 1.'), true);
+  assert.equal(sameSavedSource('" ignored quote |\n\nWRITE 1.', '" ignored quote |\nWRITE 1.'), true);
+  assert.notEqual(sourceResult('id', object, source, 'WRITE 1.\n\n', 'active').revision,
+    sourceResult('id', object, source, 'WRITE 1.', 'active').revision);
 });
 class FakeBackend implements Backend {
   active = 'REPORT ztest.'; inactive: string | undefined;
@@ -61,6 +71,133 @@ async function fixture() {
     cleanup: async () => { await operations.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
+test('source save reports accepted writes when readback fails, without inventing a revision', async () => {
+  const f = await fixture(); try {
+    const read = f.backend.read.bind(f.backend);
+    f.backend.read = async (uri, version) => {
+      if (version === 'inactive' && f.backend.saves) throw new AppError('OUTCOME_UNKNOWN', 'Read failed');
+      return read(uri, version);
+    };
+    const result = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      source_uri: source, source: 'REPORT ztest. WRITE 1.',
+      expected_revision: (await read(object, 'active')).revision, request_id: 'readback-failure' });
+    assert.equal(result.status, 'error'); assert.equal(result.outcome, 'partial');
+    assert.equal(result.source_save?.saved, true);
+    assert.equal(result.source_save?.verification, 'unavailable');
+    assert.equal(result.source_save?.inactive_revision, undefined);
+    assert.equal(f.backend.unlocks, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('source save reports unknown dispatched outcomes and adds contextual signature hints only for module scanner errors', async () => {
+  for (const module of [true, false]) {
+    const f = await fixture(); try {
+      const uri = module ? '/sap/bc/adt/functions/groups/zgroup/fmodules/zmodule' : object;
+      const submitted = 'FUNCTION ZMODULE\n  EXCEPTIONS INVALID_INPUT = 1.\nENDFUNCTION.';
+      let received = '';
+      f.backend.save = async (_uri, code) => {
+        received = code; f.backend.saves++;
+        throw AdtErrorException.create(400, { 'T100KEY-ID': 'EU', 'T100KEY-NO': '271' },
+          'ExceptionResourceScanDuringSaveFailure', 'Do not use special characters');
+      };
+      const result = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+        source_uri: `${uri}/source/main`, source: submitted,
+        expected_revision: (await f.backend.read(uri, 'active')).revision, request_id: 'scan-failure' });
+      assert.equal(result.error?.code, 'ADT_ERROR');
+      assert.equal(result.source_save?.saved, 'unknown');
+      assert.equal(result.source_save?.verification, 'not_run');
+      assert.equal(result.source_save?.inactive_revision, undefined);
+      const details = result.error?.details as { hints?: string[]; sap_message_number?: string };
+      assert.equal(details.sap_message_number, '271');
+      assert.equal(Boolean(details.hints?.some(h => h.includes('never name = 1'))), module);
+      assert.equal(received, submitted); assert.equal(f.backend.unlocks, 1);
+    } finally { await f.cleanup(); }
+  }
+});
+
+test('connections expose system identity without exposing credentials', async () => {
+  const f = await fixture(); try {
+    const result = await f.operations.run('list_connections', {});
+    assert.deepEqual(result.data, [{ connection_id: f.connection.connection_id, name: 'dev',
+      base_url: 'http://sap.test:8000', client: '001', language: 'EN', username: 'TEST', write_enabled: true }]);
+    assert.equal(JSON.stringify(result.data).includes('fake'), false);
+  } finally { await f.cleanup(); }
+});
+
+test('object URI saves discover the source under lock and reject ambiguous URIs', async () => {
+  const f = await fixture(); try {
+    const revision = (await f.backend.read(object, 'active')).revision;
+    for (const args of [{}, { object_uri: object, source_uri: '/sap/bc/adt/programs/programs/other/source/main' },
+      { object_uri: source }]) {
+      const bad = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+        ...args, source: 'REPORT ztest.', expected_revision: revision, request_id: randomUUID() });
+      assert.equal(bad.error?.code, 'INVALID_URI'); assert.equal(f.backend.saves, 0);
+    }
+    const read = f.backend.read.bind(f.backend);
+    f.backend.read = async (uri, version) => {
+      assert.equal(f.backend.locks > f.backend.unlocks, true);
+      return read(uri, version);
+    };
+    const saved = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      object_uri: object, source: 'REPORT ztest. WRITE 1.', expected_revision: revision, request_id: 'object-save' });
+    assert.equal(saved.status, 'success'); assert.equal(saved.source_save?.source_uri, source);
+    assert.equal(f.backend.saves, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('version conflicts provide observed revisions and safe read guidance without saving', async () => {
+  const f = await fixture(); try {
+    const active = await f.backend.read(object, 'active');
+    f.backend.inactive = 'REPORT ztest. WRITE 2.';
+    const draft = await f.backend.read(object, 'inactive');
+    const result = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      object_uri: object, source: 'REPORT ztest. WRITE 3.', expected_revision: active.revision, request_id: 'draft-conflict' });
+    assert.equal(result.error?.code, 'VERSION_CONFLICT'); assert.equal(f.backend.saves, 0);
+    const details = result.error?.details as any;
+    assert.equal(details.active_revision, active.revision); assert.equal(details.inactive_revision, draft.revision);
+    assert.equal(details.next_action.arguments.version, 'inactive');
+    assert.ok(details.guidance.includes('Do not blindly overwrite'));
+    f.backend.inactive = undefined;
+    const stale = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      object_uri: object, source: 'REPORT ztest.', expected_revision: '0'.repeat(64), request_id: 'stale-no-draft' });
+    assert.equal(stale.error?.code, 'VERSION_CONFLICT');
+    assert.equal((stale.error?.details as any).inactive_revision, undefined);
+    assert.equal((stale.error?.details as any).next_action.arguments.version, 'active');
+    assert.equal(f.backend.saves, 0);
+  } finally { await f.cleanup(); }
+});
+
+test('missing inactive source suggests an explicit active read without silently switching versions', async () => {
+  const f = await fixture(); try {
+    const result = await f.operations.run('read_source', { connection_id: f.connection.connection_id, object_uri: object, version: 'inactive' });
+    assert.equal(result.status, 'error'); assert.equal(result.error?.code, 'VERSION_UNAVAILABLE');
+    assert.equal(result.data, undefined);
+    const details = result.error?.details as any;
+    assert.equal(details.requested_version, 'inactive');
+    assert.deepEqual(details.next_action, { tool: 'read_source', arguments: { connection_id: f.connection.connection_id, object_uri: object, version: 'active' } });
+    assert.ok(details.guidance.includes('No version fallback'));
+    const active = await f.operations.run(details.next_action.tool, details.next_action.arguments);
+    assert.equal(active.status, 'success'); assert.equal((active.data as any).version, 'active');
+    f.backend.read = async () => { throw new AppError('VERSION_UNAVAILABLE', 'No active version'); };
+    const unavailableActive = await f.operations.run('read_source', { connection_id: f.connection.connection_id, object_uri: object, version: 'active' });
+    assert.equal((unavailableActive.error?.details as any)?.next_action, undefined);
+    f.backend.read = async () => { throw new AppError('AUTH_FAILED', 'Login failed'); };
+    const auth = await f.operations.run('read_source', { connection_id: f.connection.connection_id, object_uri: object, version: 'inactive' });
+    assert.equal(auth.error?.code, 'AUTH_FAILED'); assert.equal((auth.error?.details as any)?.next_action, undefined);
+  } finally { await f.cleanup(); }
+});
+
+test('creation returns actionable read instructions without inventing a source URI', async () => {
+  const f = await fixture(); try {
+    const result = await f.operations.run('create_program', { connection_id: f.connection.connection_id,
+      name: 'ZTEST', description: 'Test', package_name: '$TMP', request_id: 'create-guide' });
+    const data = result.data as any;
+    assert.equal(data.source_uri, undefined); assert.equal(data.next_action.tool, 'read_source');
+    const read = await f.operations.run(data.next_action.tool, data.next_action.arguments);
+    assert.equal(read.status, 'success'); assert.equal((read.data as any).source_uri, source);
+  } finally { await f.cleanup(); }
+});
+
 test('SAP stripping the final newline succeeds and returns the actual saved revision', async () => {
   const f = await fixture(); try {
     f.backend.save = async (_uri, code) => { f.backend.saves++; f.backend.inactive = code.replace(/[\r\n]+$/, ''); };
@@ -68,6 +205,7 @@ test('SAP stripping the final newline succeeds and returns the actual saved revi
       source_uri: source, source: 'REPORT ztest.\r\n* test\r\n',
       expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'normalized-save' });
     assert.equal(result.status, 'success'); assert.equal(result.outcome, 'confirmed');
+    assert.equal(result.source_save?.saved, true); assert.equal(result.source_save?.verification, 'passed');
     assert.deepEqual(result.data, { ...await f.backend.read(object, 'inactive'), activated: false });
   } finally { await f.cleanup(); }
 });
@@ -79,6 +217,16 @@ test('save verification still fails for changed program content', async () => {
       source_uri: source, source: 'REPORT ztest. WRITE 1.\r\n',
       expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'changed-content' });
     assert.equal(result.error?.code, 'VERIFY_FAILED'); assert.equal(result.outcome, 'partial');
+    assert.equal(result.source_save?.saved, true);
+    assert.equal(result.source_save?.verification, 'failed');
+    assert.equal(result.source_save?.inactive_revision, (await f.backend.read(object, 'inactive')).revision);
+    assert.equal(result.source_save?.object_uri, object);
+    assert.ok(result.source_save?.next_action?.includes('do not blindly retry'));
+    const replay = await f.operations.run('update_source', { connection_id: f.connection.connection_id,
+      source_uri: source, source: 'REPORT ztest. WRITE 1.\r\n',
+      expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'changed-content' });
+    assert.deepEqual(replay.source_save, result.source_save);
+    assert.equal(f.backend.saves, 1);
   } finally { await f.cleanup(); }
 });
 
@@ -147,21 +295,12 @@ test('tokens are stored hashed and revocation takes effect', async () => {
     assert.equal(await f.store.authenticate(token), false);
   } finally { await f.cleanup(); }
 });
-test('legacy package restrictions are ignored and removed on save', async () => {
+test('obsolete package restrictions are rejected instead of silently ignored', async () => {
   const f = await fixture(); try {
     const config = await f.store.load();
     const legacy = { ...config, connections: [{ ...config.connections[0], allowed_packages: ['$TMP'] }] };
     await writeFile(join(f.directory, 'config.json'), JSON.stringify(legacy));
-    const loaded = await f.store.load();
-    assert.equal('allowed_packages' in loaded.connections[0], false);
-    const result = await f.operations.run('create_program', { connection_id: f.connection.connection_id,
-      name: 'ZTEST', package_name: 'ZNEW_PACKAGE', description: 'Test', transport_task: 'DEVK900001', request_id: 'legacy-package' });
-    assert.equal(result.status, 'success');
-    const listed = await f.operations.run('list_connections', {});
-    assert.equal(JSON.stringify(listed.data).includes('allowed_packages'), false);
-    await f.store.save(loaded);
-    assert.equal((await readFile(join(f.directory, 'config.json'), 'utf8')).includes('allowed_packages'), false);
-    assert.equal(loaded.connections[0].connection_id, f.connection.connection_id);
+    await assert.rejects(f.store.load(), /allowed_packages/);
   } finally { await f.cleanup(); }
 });
 test('concurrent duplicate updates save once, unlock and log no source or handle', async () => {
@@ -436,7 +575,7 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal((await fetch(url, { method: 'POST' })).status, 401);
     assert.equal((await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token.token}`, Origin: 'http://evil.test' } })).status, 403);
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token.token}` } } }));
-    assert.equal((await client.listTools()).tools.length, 10);
+    assert.equal((await client.listTools()).tools.length, 14);
     const result = await client.callTool({ name: 'read_source', arguments: { connection_id: f.connection.connection_id, object_uri: object } });
     assert.equal(result.isError, false); assert.equal((result.structuredContent as { data: { source: string } }).data.source, 'REPORT ztest.');
     const invalid = await client.callTool({ name: 'read_source', arguments: { connection_id: f.connection.connection_id, object_uri: 'http://evil.test' } });
