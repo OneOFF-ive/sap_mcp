@@ -1,14 +1,18 @@
 # SAP MCP
 
-函数接口提示：`create_function_module` 的返回结果提供 `interface_help.example_source`，使用实际函数名演示 IMPORTING、EXPORTING 和 TABLES 的 ADT 声明格式。示例仅作参考，不会自动写入；按 next_action 读取真实源码和 revision 后再调用 update_source。TABLES 使用 `TYPE BAPIRET2`，不使用旧式 `STRUCTURE`；EXCEPTIONS 声明仅列名称，不使用 CALL FUNCTION 的 `name = 1` 写法。定义区可能被 SAP 重建，持久注释放在函数体中。
-
-读取 `inactive` 返回 `VERSION_UNAVAILABLE` 时，错误中提供 `details.next_action`，明确建议读取同一对象的 `active` 版本。服务不会静默切换或编造 revision；客户端需查看 active 源码再决定修改。缺少 inactive 版本本身不能单独证明激活成功，认证失败等其他错误也不会被改成该建议。
-
-保存及激活后的内容校验忽略纯空行（包括只有空格或 Tab 的行）及 CRLF/LF 差异；非空行的内容、顺序、缩进、注释和字符串仍严格比较，多行字面量中的空行保留。原始源码 hash/revision 不变。函数组整体激活先按单对象请求格式依次激活快照中的未激活成员，再激活组本身，并对快照全部成员读回验证。它不是原子事务；失败结果保留已完成成员，不自动重试，也不回滚已激活对象。
-
 Windows 本地 Web 管理界面 + Streamable HTTP MCP 服务，通过 HTTP ADT 访问 SAP ABAP，不依赖 VS Code、SAP GUI 或数据库；同时保留 CLI。
 
 支持多连接管理、对象搜索、源码读取、Program、Include、Function Group 与 Function Module 创建，以及主源码修改、语法检查和激活。写入默认关闭，可按连接启用。
+
+## 文档入口
+
+- [文档导航](docs/README.md)：按使用者和任务选择阅读入口。
+- [MCP 客户端 SAP 操作手册](docs/mcp-client-guide.md)：供 agent 和客户端开发者快速学习 tools、SAP 概念、操作步骤和错误恢复。
+- [部署与运维手册](docs/operations.md)：安装、连接、认证、启停、升级和故障排查。
+- [架构文档](docs/architecture.md)：模块职责、协议和实现边界。
+- [安全说明](docs/security.md)：认证边界、锁文件恢复和依赖审计说明。
+
+客户端建议先阅读操作手册，再以运行中服务的 `instructions` 和 `tools/list` 为准。文档不会替代目标 SAP 系统的权限与兼容性验证。
 
 ## 环境与安装
 
@@ -184,7 +188,7 @@ SQL 必须以 SELECT 开始并包含 FROM。不接受注释、语句结束符（
 
 重复 `request_id` 在本次服务运行期间返回原操作的精简结果，不重复执行；源码不保留在重复请求缓存中，需要时使用 `read_source` 获取。缓存最多 512 条，每条序列化结果不超过 32 KiB，超大的附加详情省略并返回 `CACHED_DETAILS_OMITTED`。缓存满时拒绝新的写请求，不淘汰旧 ID；确认在途操作后可重启服务。修改参数需使用新 ID。结果 `unknown` 时必须查询 SAP，不直接重试。锁清理失败后，该连接的后续写入会被阻止，需核实 SAP 锁状态后再重启。
 
-保存和激活后的源码读回比较允许 SAP 移除末尾换行，其他字符差异仍报 `VERIFY_FAILED`；revision 使用后端实际返回文本计算，不忽略换行。激活列表最多 20 个对象，顺序处理，失败即停止，不回滚先前已完成对象。
+保存和激活后的源码读回比较忽略纯空行与 CRLF/LF 差异，但保留多行字面量内的空行；非空行的内容、顺序、缩进、注释和字符串仍参与比较。函数模块定义另有下述等价校验。revision 和 hash 始终使用后端实际返回文本计算，不使用校验归一化后的文本。激活列表最多 20 个对象，顺序处理，失败即停止，不回滚先前已完成对象。
 
 ## 函数组与函数模块
 

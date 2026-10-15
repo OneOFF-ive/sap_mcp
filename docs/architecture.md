@@ -2,6 +2,8 @@
 
 本文说明 SAP MCP 0.1.0 的模块、接口和操作流程。安装与使用步骤见 [README](../README.md)。
 
+文档核对日期：2026-10-15。客户端操作见 [MCP 客户端手册](mcp-client-guide.md)，部署与排障见 [运维手册](operations.md)。本文描述实现，不表示所有功能已在每个 SAP 版本验证。
+
 ## 1. 目标与范围
 
 提供不依赖 VS Code 的本地 Web 管理界面与 CLI，通过 HTTP/HTTPS ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。后端 HTTPS 沿用默认 TLS 校验，不自动降级；本机管理与 MCP 监听仍使用 loopback HTTP。
@@ -51,6 +53,24 @@ flowchart LR
 | 会话与调度 | SAP 登录状态、会话过期、并发控制、锁生命周期 |
 | ADT 适配器 | discovery、媒体类型与能力适配、HTTP 请求和响应解析 |
 
+### 实现文件与维护边界
+
+工具定义和写操作分类已从 HTTP 注册与业务执行代码中抽离。当前职责如下：
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/tool-definitions.ts` | 导出 toolSchemas、ToolName 和 toolDescription，集中维护参数校验及客户端描述 |
+| `src/tool-policy.ts` | 导出 writeTools，统一定义需要写保护的工具集合 |
+| `src/server.ts` | 使用上述定义注册 MCP tools、生成 annotations，并提供 HTTP 认证和传输 |
+| `src/operations.ts` | 根据同一 writeTools 执行写入开关、会话预检、请求去重及业务流程 |
+| `src/client-guidance.ts` | MCP 初始化时提供的客户端操作指引 |
+| `src/config.ts` | 连接 schema、URL 规范化、配置及令牌校验、Windows 凭据访问 |
+| `src/errors.ts` | 后端错误分类与脱敏，由 safeError 形成对外错误 |
+
+新增写工具时必须同步工具 schema、描述、writeTools 和操作实现，避免 annotations 声明为只读却执行写入，或遗漏写入保护。当前 writeTools 包含 create_program、create_function_group、create_function_module、create_transport_request、update_source、activate_objects 六项。
+
+这次抽离不改变 18 个工具的名称与 JSON Schema、HTTP 地址或认证方式；客户端仍通过运行时 tools/list 获取接口，不依赖源码文件布局。
+
 ## 3. 连接模型
 
 | 字段 | 含义 |
@@ -63,7 +83,7 @@ flowchart LR
 | `language` | ADT 登录语言参数，例如 EN；按后端支持验证 |
 | `write_enabled` | 默认 false，由本地配置显式启用 |
 
-SAP 连接使用 HTTP ADT。`base_url` 不含用户名、密码、查询参数和 fragment；CLI 可接受末尾 `/sap/bc/adt` 并规范化，其他自定义反向代理路径暂不支持。端口由用户填写，不根据系统号推算。
+SAP 连接支持 HTTP/HTTPS ADT。`base_url` 不含用户名、密码、查询参数和 fragment；CLI 可接受末尾 `/sap/bc/adt` 并规范化，其他自定义反向代理路径暂不支持。端口由用户填写，不根据系统号推算。
 
 配置存放在 `%APPDATA%\sap-mcp\config.json`，含 `schema_version=1`，可由 `SAP_MCP_CONFIG_DIR` 覆盖。连接没有 credential_ref 字段，直接按 connection_id 访问 Windows 凭据管理器。配置更新采用临时文件加 rename；删除连接时清理凭据。CLI 使用 runtime.lock 禁止服务运行期间添加、编辑或删除连接，config.lock 串行化配置变更；服务运行时可管理令牌。
 
@@ -118,6 +138,7 @@ Web 管理端口独立于 MCP，默认监听 127.0.0.1:8766。启动生成随机
 | --- | --- | --- |
 | `list_connections` | 无 | ID、名称、write_enabled，不探测实时登录状态 |
 | `get_capabilities` | `connection_id` | discovery 支持的能力及探测时间 |
+| `search_enhancements` | 连接、query、可选 type、limit | 增强对象、coverage、truncated 和仓库版本探测证据 |
 | `search_objects` | 连接、`query`、可选类型、`limit` | 名称、类型、包、对象 URI、是否截断 |
 | `query_table` | 连接、表名、可选字段和 AND 筛选、`limit` | 列元数据、字符串行、返回行数、是否截断 |
 | `query_sql` | 连接、单条只读 SELECT、`limit` | 列元数据、字符串行、返回行数、是否截断 |
@@ -128,7 +149,7 @@ Web 管理端口独立于 MCP，默认监听 127.0.0.1:8766。启动生成随机
 | `create_function_module` | 连接、name、description、function_group_uri、可选 transport_task、request_id | 成员 URI、父组 URI、FUGR/FF、创建状态 |
 | `list_function_group_members` | 连接、function_group_uri、limit | FUGR/FF 和 FUGR/I 成员及截断标记 |
 | `get_function_group` | 连接、function_group_uri | 成员版本、源码 revision、组快照 revision |
-| `update_source` | 连接、`source_uri`、`source`、`expected_revision`、可选 `transport_task`、`request_id` | 保存状态、新 revision、inactive 状态 |
+| `update_source` | 连接、`object_uri` 或 `source_uri`（至少一个）、`source`、`expected_revision`、可选 `transport_task`、`request_id` | 保存状态、新 revision、inactive 状态 |
 | `syntax_check` | 连接、`object_uri`、`version` | 是否通过、结构化诊断 |
 | `activate_objects` | 连接、对象 URI 与预期 revision 列表、`request_id` | 各对象结果及部分失败信息 |
 | `list_transport_requests` | 连接 | 当前用户的后端传输请求数据，无状态过滤参数 |
@@ -192,7 +213,7 @@ create_transport_request 是写操作，复用连接 write_enabled、串行队�
 
 当前不使用 ETag 或 If-Match；revision 由连接 ID、源码 URI、active/inactive 版本及源码 SHA-256 生成，在锁内重读并校验。写入支持 Program、Include、函数模块及函数组 Include 的 source/main，函数组容器不能作为源码修改。预期版本不一致，或从 active revision 覆盖不同 inactive 草稿时，返回 VERSION_CONFLICT。
 
-保存后的读回比较忽略文本末尾连续 CR/LF，兼容 SAP 移除末尾换行；其他字符保持严格比较。revision 和 hash 始终基于后端实际文本生成。
+保存后的读回比较统一换行格式并忽略纯空行，但保留多行字面量中的空行；非空行的顺序、缩进、注释和字符串仍参与比较。受支持的函数定义另按参数 token 等价比较，实现区不折叠非空行。revision 和 hash 始终基于后端实际文本生成。
 
 保存与语法检查分开：保存成功不等于语法通过，也不等于激活。锁释放在 finally 路径执行；解锁失败不能覆盖已经成功保存的事实。
 
@@ -200,13 +221,13 @@ create_transport_request 是写操作，复用连接 write_enabled、串行队�
 
 语法检查针对明确版本调用后端支持的检查能力，返回结构化诊断。激活是独立写操作：在编辑锁内核对 inactive revision，释放编辑锁后再次核对，再调用 SAP 激活接口，由激活接口获取所需锁。解锁失败或版本变化时不发出激活请求；激活成功后读回 active 源码进行验证。解锁到激活之间存在并发窗口，不承诺原子版本条件激活。
 
-多对象激活顺序执行，失败即停止；返回已完成结果和 failed_object_uri，不回滚先前对象。激活成功后读回比较也仅忽略末尾 CR/LF。服务不激活请求外的全部 inactive 对象，不承诺跨对象原子性。
+多对象激活顺序执行，失败即停止；返回已完成结果和 failed_object_uri，不回滚先前对象。激活成功后读回沿用保存比较策略。组整体激活包含组快照中的成员；服务不激活无关对象的全部 inactive 版本，不承诺跨对象原子性。
 
 ## 9. 错误与恢复
 
 函数对象使用 FUGR/F（组）、FUGR/FF（函数模块）及 FUGR/I（组内 Include）。函数模块源码编辑的 lock/unlock 指向模块自身，组内 Include 当前指向父组，保存指向成员源码 URI。源码版本读取使用独立的无状态 ADT 会话，不共享持锁写入会话的 Cookie，避免版本探测改变编辑上下文；版本冲突检查仍在 SAP 对象锁持有期间执行。HTTP 错误响应交给 ADT SDK 更新 Cookie 并分类，重定向仍拒绝。get_capabilities 的 source_read_policy 为 separate_stateless_session。创建函数模块前核对父组类型、所属包和传输任务，并在组锁下创建；请求 XML 通过 XMLBuilder 转义构建。创建后核对对象类型，失败不自动删除对象。
 
-组整体激活的 expected_revision 来自 get_function_group，不是虚构的 source/main。快照包含组名、变更时间和排序后的成员 URI、版本、源码 revision 及去除末尾换行后的内容哈希；读取优先 inactive，指定版本不存在时使用 active。组锁内校验、解锁后二次校验、整体激活并读回成员。最多 500 个成员；组快照无分页、不覆盖接口参数的完整 XML 定义，也不承诺原子激活。当前没有结构化接口维护工具，但支持源码式 FUNCTION 定义的后端可通过源码修改参数；可选整型 IMPORTING 声明和 TABLES 的 `T_RETURN TYPE BAPIRET2 OPTIONAL` 声明已验证，其他接口特性应分别验证。ADT 定义区不使用旧式 `STRUCTURE BAPIRET2`，也不是 Local Interface 注释；最后一个声明以句点结束。SAP 会从持久化接口重新生成定义区，可能规范化格式，保存回读仍严格校验，失败时应核实 inactive 状态。
+组整体激活的 expected_revision 来自 get_function_group，不是虚构的 source/main。快照包含组名、变更时间和排序后的成员 URI、版本、源码 revision 及按保存比较策略生成的内容哈希；组快照读取优先 inactive，指定版本不存在时使用 active，这不同于 read_source 的显式版本要求。组锁内校验、解锁后二次校验、整体激活并读回成员。最多 500 个成员；组快照无分页、不覆盖接口参数的完整 XML 定义，也不承诺原子激活。当前没有结构化接口维护工具，但支持源码式 FUNCTION 定义的后端可通过源码修改参数；可选整型 IMPORTING 声明和 TABLES 的 `T_RETURN TYPE BAPIRET2 OPTIONAL` 声明已验证，其他接口特性应分别验证。ADT 定义区不使用旧式 `STRUCTURE BAPIRET2`，也不是 Local Interface 注释；最后一个声明以句点结束。SAP 会从持久化接口重新生成定义区，可能规范化格式；受支持定义语法按 token 等价校验，其余按保存比较策略核实，失败时应读取 inactive 状态。
 
 | 错误码 | 含义与恢复方式 |
 | --- | --- |
@@ -229,9 +250,9 @@ create_transport_request 是写操作，复用连接 write_enabled、串行队�
 | `REQUEST_ID_CONFLICT` / `REQUEST_LIMIT` | 重复 ID 参数冲突，或内存请求索引已满 |
 | `BUSY` / `SERVER_STOPPING` | 操作队列已满或服务正在退出 |
 | `ADT_ERROR` | 未进一步分类的后端错误，原始响应不返回给 agent |
+| `OUTCOME_UNKNOWN` | 写请求超时或连接中断，读回核实后再决定重试 |
 
 后端错误优先从 response.status、status 或 ADT XML 异常的 err 字段获取 HTTP 状态。仅对 ADT 库识别的 SAP 异常提取消息和白名单属性；error.details 可包含 http_status、sap_message、sap_error_type、sap_message_id、sap_message_number。消息最大 1024 字符，脱敏密码、Authorization、cookie、CSRF 和锁句柄；认证失败不返回 SAP 消息文本，不输出请求配置、响应正文或异常堆栈。get_capabilities 同时返回 source_lock_policy，便于核对运行中服务的锁策略。
-| `OUTCOME_UNKNOWN` | 写请求超时或连接中断，读回核实后再决定重试 |
 
 写操作带客户端 `request_id`。内存索引保存请求摘要和精简结果，结果去除 source 字段，每条序列化结果最多 32 KiB；超过上限时省略 data 与错误附加详情，返回 CACHED_DETAILS_OMITTED。最多保存 512 条，序列化结果合计不超过 16 MiB；此上限不包含 JavaScript 对象开销和在途操作内存。容量满时拒绝新写请求，不淘汰防重复记录。相同 ID 与不同参数冲突；重复请求等待原操作并返回精简结果，不再次执行。索引随进程退出清空，不从日志重建。进程重启或网络中断后的未知结果必须查询 SAP，不承诺跨 SAP 与本地记录的 exactly-once。
 
