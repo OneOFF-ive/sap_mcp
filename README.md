@@ -90,6 +90,22 @@ npm start -- token revoke <令牌ID>
 
 ## Tools 与工作流程
 
+### 客户增强查询
+
+`search_enhancements` 提供只读的 ADT 仓库名称查询，`query` 支持 `*` 通配符；`type` 默认为 `all`，也可指定 `SMOD`（经典客户出口）、`CMOD`（出口项目）、`SXSD` / `SXCI`（经典 BAdI 定义/实现）、`ENHS` / `ENHO`（增强点容器/增强实现）、`ENSC` / `ENHC`（复合增强点/实现）。`limit` 为合并结果总上限，默认 100，最大 500。
+
+```json
+{"connection_id":"由 list_connections 返回的 UUID","query":"*","type":"all","limit":100}
+```
+
+返回名称、原始对象类型、增强分类、描述、包、ADT 地址，以及各类型查询范围 `coverage` 和截断标记 `truncated`。每类单独查询后合并排序；任一后端查询失败时返回错误，不伪装成空结果。功能只依赖现有 ADT 搜索，无需开启写入或安装 ABAP 程序。
+
+实现和项目（CMOD、SXCI、ENHO、ENHC）返回 `activation`，通过独立只读会话分别读取 active/inactive 元数据，核对对象名称、完整类型和实际返回版本；仅对最终返回的对象查询，每个实现最多增加两次元数据读取。`status=active` 表示确认存在活动版本；`active_with_inactive_version` 表示同时确认存在未激活草稿；`unknown` 表示无法确认活动版本。定义及增强点容器返回 `not_applicable`。`probes` 保留逐版本证据和脱敏错误；404、权限不足、版本缺失或后端静默回退均不会被误判成未激活，单个状态查询失败仍保留搜索结果。
+
+`activation.scope=repository_version`：这不是运行时启用状态。活动版本存在不证明 BAdI 开关、过滤条件或 CMOD 项目已使实现生效，`runtime_enabled` 对实现始终为 `unknown`。当前无法可靠给出“已停用”的结论，不能把 `unknown` 当作 inactive。
+
+此入口不承诺全系统完整清单：ADT 可见性取决于版本与权限，特别是 SMOD/CMOD；空结果不能证明对象不存在或后端支持该类型。新 BAdI 当前以 ENHS/ENHO 容器呈现，不枚举容器内的 BAdI 元素。暂不查询事务码关联、CMOD 组件或隐式增强位置。需要这些详情时应通过 SAP 增强信息系统进一步核实。
+
 已注册：`list_connections`、`get_capabilities`、`search_objects`、`list_package_objects`、`read_source`、`create_program`、`create_function_group`、`create_function_module`、`list_function_group_members`、`get_function_group`、`update_source`、`syntax_check`、`activate_objects`、`list_transport_requests`、`create_transport_request`。
 
 `search_objects` 的完整类型如 `PROG/P` 会精确过滤，类型族如 `PROG` 返回该族对象；`limit` 默认 100，最大 500。精确类型搜索在后端类型族结果中最多扫描 501 条，`truncated=true` 表示结果可能不完整，可缩小搜索条件。包列表排除没有 `OBJECT_URI` 的分类节点，先过滤再限量；返回后端节点字段，不提供分页游标。读取仅支持对象发现的主源码，不支持任意 include 片段选择。

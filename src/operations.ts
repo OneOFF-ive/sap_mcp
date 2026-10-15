@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { searchEnhancements } from './enhancements.js';
 import { AdtBackend, adtUri, programUri, functionGroupUri, isFunctionGroup, compareSavedSource, savedSourceHash, definitionCommentsHash, type Backend, type Version, type ProgramKind } from './adt.js';
 import { ConfigStore, digest, type Connection, type Credentials } from './config.js';
 import { AuditLog } from './audit.js';
@@ -185,6 +186,8 @@ export class Operations {
     switch (tool) {
       case 'get_capabilities': return b.capabilities();
       case 'search_objects': return b.search(p.query!, p.type, p.limit ?? 100);
+      case 'search_enhancements': return searchEnhancements((query, type, limit) => b.search(query, type, limit), p.query!, p.type, p.limit ?? 100,
+        b.enhancementActivation ? row => b.enhancementActivation!(row.object_uri, row.name, row.type) : undefined);
       case 'list_package_objects': return b.listPackage(p.package_name!, p.limit ?? 100);
       case 'read_source': return b.read(adtUri(p.object_uri!), p.version ?? 'active', p.source_uri);
       case 'syntax_check': return b.check(adtUri(p.object_uri!), p.version ?? 'inactive');

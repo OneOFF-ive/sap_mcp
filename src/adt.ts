@@ -8,6 +8,7 @@ import { AppError, safeError } from './errors.js';
 import { functionDefinition } from './function-signature.js';
 import { parseTransportList, parseTransportDetails } from './transports.js';
 import { groupActivationBody, activationResponse } from './activation.js';
+import { probeEnhancementActivation, type EnhancementActivation } from './enhancements.js';
 
 export type Version = 'active' | 'inactive';
 export type ProgramKind = 'report' | 'include' | 'module_pool' | 'subroutine_pool';
@@ -98,6 +99,7 @@ export function sourceResult(connectionId: string, object: string, uri: string, 
     revision: digest(JSON.stringify([connectionId, uri, version, hash])) };
 }
 export interface Backend {
+  enhancementActivation?(object: string, name: string, type: string): Promise<EnhancementActivation>;
   capabilities(): Promise<unknown>;
   search(query: string, type: string | undefined, limit: number): Promise<unknown>;
   listPackage(name: string, limit: number): Promise<unknown>;
@@ -172,6 +174,13 @@ export class AdtBackend implements Backend {
     return { objects: matches.slice(0, limit).map(r => ({ name: r['adtcore:name'], type: r['adtcore:type'],
       package_name: r['adtcore:packageName'], object_uri: adtUri(r['adtcore:uri']), description: r['adtcore:description'] })),
       truncated: matches.length > limit || rows.length >= fetchLimit };
+  }
+  async enhancementActivation(object: string, name: string, type: string): Promise<EnhancementActivation> {
+    const uri = adtUri(object);
+    return probeEnhancementActivation(async version => {
+      const { metaData } = await this.reader.objectStructure(uri, version);
+      return { name: metaData['adtcore:name'], type: metaData['adtcore:type'], version: metaData['adtcore:version'] };
+    }, name, type);
   }
   async listPackage(name: string, limit: number) {
     const result = await this.client.nodeContents('DEVC/K', name);

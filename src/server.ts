@@ -1,4 +1,5 @@
 import express from 'express';
+import { enhancementTypes } from './enhancements.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
@@ -19,6 +20,7 @@ const requestId = z.string().min(1).max(128);
 const schemas = {
   list_connections: z.object({}).strict(),
   get_capabilities: z.object(connection).strict(),
+  search_enhancements: z.object({ ...connection, query: z.string().trim().min(1).max(128), type: z.enum(['all', ...enhancementTypes]).default('all'), limit }).strict(),
   search_objects: z.object({ ...connection, query: z.string().min(1).max(128), type: z.string().max(30).optional(), limit }).strict(),
   list_package_objects: z.object({ ...connection, package_name: pkg, limit }).strict(),
   read_source: z.object({ ...connection, object_uri: uri, source_uri: uri.optional(), version: version.default('active') }).strict(),
@@ -44,6 +46,7 @@ const schemas = {
 const descriptions: Record<keyof typeof schemas, string> = {
   list_connections: 'List configured SAP connections with Client, language, username, backend URL and write policy. Confirm the intended system and Client before writing.',
   get_capabilities: 'Probe ADT discovery. A capability does not imply write authorization.',
+  search_enhancements: 'Read-only repository name search across customer exits (SMOD), projects (CMOD), classic BAdIs (SXSD/SXCI), enhancement spots and implementations (ENHS/ENHO/ENSC/ENHC). Use * wildcards; type defaults to all. Returns categories, ADT URIs and coverage limitations. Implementation activation.status is active, active_with_inactive_version, or unknown, based on matching ADT version metadata; definitions are not_applicable. Inspect activation.probes for evidence and failures. These are repository versions: runtime_enabled remains unknown; never infer BAdI switches, filters or CMOD project enablement from active version availability. Empty results do not prove absence: ADT may not expose these types. New BAdI elements and transaction associations are not enumerated.',
   search_objects: 'Search SAP repository objects and return relative ADT object URIs.',
   list_package_objects: 'List package contents with a limit. Pagination is not supported in this release.',
   read_source: 'Read the exact active or inactive main source. Keep the revision for a later update.',
