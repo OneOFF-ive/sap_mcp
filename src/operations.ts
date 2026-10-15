@@ -5,6 +5,7 @@ import { ConfigStore, digest, type Connection, type Credentials } from './config
 import { AuditLog } from './audit.js';
 import { AppError, safeError } from './errors.js';
 import { functionModuleGuidance } from './function-help.js';
+import { tableQuerySchema, readOnlySql, type TableQuery } from './data-query.js';
 
 export type Input = {
   connection_id?: string; query?: string; type?: string; limit?: number; package_name?: string;
@@ -12,6 +13,7 @@ export type Input = {
   name?: string; description?: string; transport_task?: string; request_id?: string;
   program_kind?: ProgramKind;
   function_group_uri?: string;
+  table_name?: string; fields?: string[]; filters?: TableQuery['filters']; sql?: string;
   objects?: { object_uri: string; expected_revision: string }[];
 };
 type SourceSaveState = { saved: boolean | 'unknown'; verification: 'not_run' | 'pending' | 'passed' | 'failed' | 'unavailable'; object_uri: string; source_uri?: string; inactive_revision?: string; next_action?: string; normalization_applied?: boolean; difference?: string };
@@ -185,6 +187,16 @@ export class Operations {
   private async dispatch(tool: string, p: Input, c: Connection, b: Backend, ctx: Context): Promise<unknown> {
     switch (tool) {
       case 'get_capabilities': return b.capabilities();
+      case 'query_table': {
+        const query = tableQuerySchema.parse({ table_name: p.table_name, fields: p.fields, filters: p.filters, limit: p.limit });
+        if (!b.queryTable) throw new AppError('CAPABILITY_UNSUPPORTED', 'Table data preview is unavailable');
+        return b.queryTable(query);
+      }
+      case 'query_sql': {
+        const query = readOnlySql({ sql: p.sql!, limit: p.limit });
+        if (!b.querySql) throw new AppError('CAPABILITY_UNSUPPORTED', 'SQL data preview is unavailable');
+        return b.querySql(query);
+      }
       case 'search_objects': return b.search(p.query!, p.type, p.limit ?? 100);
       case 'search_enhancements': return searchEnhancements((query, type, limit) => b.search(query, type, limit), p.query!, p.type, p.limit ?? 100,
         b.enhancementActivation ? row => b.enhancementActivation!(row.object_uri, row.name, row.type) : undefined);

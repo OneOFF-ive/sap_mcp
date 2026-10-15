@@ -7,6 +7,7 @@ import type { ConfigStore } from './config.js';
 import { Operations, type Input } from './operations.js';
 import { safeError } from './errors.js';
 import { functionModuleSyntaxHelp } from './function-help.js';
+import { tableQuerySchema, sqlQuerySchema } from './data-query.js';
 
 const id = z.string().uuid();
 const connection = { connection_id: id };
@@ -21,6 +22,8 @@ const schemas = {
   list_connections: z.object({}).strict(),
   get_capabilities: z.object(connection).strict(),
   search_enhancements: z.object({ ...connection, query: z.string().trim().min(1).max(128), type: z.enum(['all', ...enhancementTypes]).default('all'), limit }).strict(),
+  query_table: tableQuerySchema.extend(connection),
+  query_sql: sqlQuerySchema.extend(connection),
   search_objects: z.object({ ...connection, query: z.string().min(1).max(128), type: z.string().max(30).optional(), limit }).strict(),
   list_package_objects: z.object({ ...connection, package_name: pkg, limit }).strict(),
   read_source: z.object({ ...connection, object_uri: uri, source_uri: uri.optional(), version: version.default('active') }).strict(),
@@ -47,6 +50,8 @@ const descriptions: Record<keyof typeof schemas, string> = {
   list_connections: 'List configured SAP connections with Client, language, username, backend URL and write policy. Confirm the intended system and Client before writing.',
   get_capabilities: 'Probe ADT discovery. A capability does not imply write authorization.',
   search_enhancements: 'Read-only repository name search across customer exits (SMOD), projects (CMOD), classic BAdIs (SXSD/SXCI), enhancement spots and implementations (ENHS/ENHO/ENSC/ENHC). Use * wildcards; type defaults to all. Returns categories, ADT URIs and coverage limitations. Implementation activation.status is active, active_with_inactive_version, or unknown, based on matching ADT version metadata; definitions are not_applicable. Inspect activation.probes for evidence and failures. These are repository versions: runtime_enabled remains unknown; never infer BAdI switches, filters or CMOD project enablement from active version availability. Empty results do not prove absence: ADT may not expose these types. New BAdI elements and transaction associations are not enumerated.',
+  query_table: 'Read table or supported DDIC/CDS entity data via DDIC Data Preview. Use table_name, optional fields and AND-combined filters (eq/ne/gt/ge/lt/le/like). Values are strings; LIKE uses SQL % and _ wildcards. Default limit 100, maximum 500. Returns column metadata and raw string rows, preserving leading zeros and decimal precision. SAP controls entity support and permissions. Uses configured Client; no cross-client override. No stable ordering or pagination is promised. Basic queries use an empty preview body for older systems; projection/filter support depends on SAP. Does not require write_enabled.',
+  query_sql: 'Run one read-only ABAP SQL SELECT through SAP freestyle Data Preview, subject to backend version and permissions. Supports joins, aggregations and subqueries as accepted by SAP. No comments, statement terminators, INTO, writes, client overrides or privileged access. Default limit 100, maximum 500; returns raw string values and column metadata. Limit bounds returned rows, not backend scan cost. Uses configured Client. No pagination. Does not require write_enabled. Query get_capabilities for discovery advertisement; unadvertised is not proof of unavailability.',
   search_objects: 'Search SAP repository objects and return relative ADT object URIs.',
   list_package_objects: 'List package contents with a limit. Pagination is not supported in this release.',
   read_source: 'Read the exact active or inactive main source. Keep the revision for a later update.',

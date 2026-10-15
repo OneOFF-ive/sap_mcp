@@ -686,7 +686,13 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal((await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token.token}`, Origin: 'http://evil.test' } })).status, 403);
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token.token}` } } }));
     const listedTools = (await client.listTools()).tools;
-    assert.equal(listedTools.length, 15);
+    assert.equal(listedTools.length, 18);
+    for (const name of ['query_table', 'query_sql', 'search_enhancements']) {
+      const tool = listedTools.find(t => t.name === name)!;
+      assert.equal(tool.annotations?.readOnlyHint, true);
+      assert.equal(tool.annotations?.destructiveHint, false);
+      assert.ok(!tool.inputSchema.required?.includes('request_id'));
+    }
     const createTransport = listedTools.find(t => t.name === 'create_transport_request')!;
     assert.equal(createTransport.annotations?.readOnlyHint, false);
     assert.ok(createTransport.inputSchema.required?.includes('request_id'));
@@ -701,5 +707,35 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal(result.isError, false); assert.equal((result.structuredContent as { data: { source: string } }).data.source, 'REPORT ztest.');
     const invalid = await client.callTool({ name: 'read_source', arguments: { connection_id: f.connection.connection_id, object_uri: 'http://evil.test' } });
     assert.equal(invalid.isError, true);
+  } finally { await client.close(); await runtime.close(); await f.cleanup(); }
+});
+
+test('query tools work with writes disabled and validate through the MCP boundary', async () => {
+  const f = await fixture();
+  await f.store.save({ schema_version: 1, connections: [{ ...f.connection, write_enabled: false }], tokens: [] });
+  const calls: unknown[] = [];
+  Object.assign(f.backend, {
+    queryTable: async (p: unknown) => { calls.push(p); return { columns: [{ name: 'MATNR' }], rows: [{ MATNR: '000001' }] }; },
+    querySql: async (p: unknown) => { calls.push(p); return { rows: [] }; }
+  });
+  const token = await f.store.createToken(); const runtime = await startHttp(f.store, f.operations, 0);
+  const address = runtime.listener.address(); assert.ok(address && typeof address !== 'string');
+  const client = new Client({ name: 'query-test', version: '1' });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`),
+      { requestInit: { headers: { Authorization: `Bearer ${token.token}` } } }));
+    const base = { connection_id: f.connection.connection_id };
+    const result = await client.callTool({ name: 'query_table', arguments: { ...base, table_name: 'MARA' } });
+    assert.equal(result.isError, false);
+    assert.equal((result.structuredContent as { data: { rows: { MATNR: string }[] } }).data.rows[0].MATNR, '000001');
+    const sql = await client.callTool({ name: 'query_sql', arguments: { ...base, sql: 'SELECT * FROM mara' } });
+    assert.equal(sql.isError, false);
+    for (const args of [{ table_name: 'MARA', limit: 501 }, { table_name: 'MARA;DELETE' }, { table_name: 'MARA', extra: true }]) {
+      const invalid = await client.callTool({ name: 'query_table', arguments: { ...base, ...args } });
+      assert.equal(invalid.isError, true);
+    }
+    const invalid = await client.callTool({ name: 'query_sql', arguments: { ...base, sql: 'DELETE FROM mara' } });
+    assert.equal(invalid.isError, true);
+    assert.equal(calls.length, 2); assert.equal(f.backend.locks, 0); assert.equal(f.backend.saves, 0);
   } finally { await client.close(); await runtime.close(); await f.cleanup(); }
 });

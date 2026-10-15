@@ -106,7 +106,39 @@ npm start -- token revoke <令牌ID>
 
 此入口不承诺全系统完整清单：ADT 可见性取决于版本与权限，特别是 SMOD/CMOD；空结果不能证明对象不存在或后端支持该类型。新 BAdI 当前以 ENHS/ENHO 容器呈现，不枚举容器内的 BAdI 元素。暂不查询事务码关联、CMOD 组件或隐式增强位置。需要这些详情时应通过 SAP 增强信息系统进一步核实。
 
-已注册：`list_connections`、`get_capabilities`、`search_objects`、`list_package_objects`、`read_source`、`create_program`、`create_function_group`、`create_function_module`、`list_function_group_members`、`get_function_group`、`update_source`、`syntax_check`、`activate_objects`、`list_transport_requests`、`create_transport_request`。
+已注册：`list_connections`、`get_capabilities`、`query_table`、`query_sql`、`search_enhancements`、`search_objects`、`list_package_objects`、`read_source`、`create_program`、`create_function_group`、`create_function_module`、`list_function_group_members`、`get_function_group`、`update_source`、`syntax_check`、`activate_objects`、`list_transport_requests`、`create_transport_request`。
+
+### 数据查询
+
+`query_table` 通过 DDIC Data Preview 查询普通表及后端支持的 DDIC/CDS 实体。只传表名时使用空查询体，兼容基础预览接口；字段选择和筛选通过同一个 DDIC 接口提交 SELECT，是否支持由 SAP 决定，不自动改用 SQL Console。带参数的 CDS 暂无专用参数入口。
+
+```json
+{
+  "connection_id": "由 list_connections 返回的 UUID",
+  "table_name": "MARA",
+  "fields": ["MATNR", "MTART"],
+  "filters": [{ "field": "MTART", "operator": "eq", "value": "FERT" }],
+  "limit": 100
+}
+```
+
+省略 `fields` 返回全部字段；`filters` 以 AND 连接，支持 `eq`、`ne`、`gt`、`ge`、`lt`、`le`、`like`。筛选值必须为字符串，服务负责引号转义；数值和日期转换由 SAP 处理。LIKE 使用 `%` 和 `_` 通配符。字段名不接受 SQL 表达式。
+
+`query_sql` 通过独立的 freestyle Data Preview 接口执行单条只读 ABAP SQL SELECT，适合关联与聚合查询：
+
+```json
+{
+  "connection_id": "由 list_connections 返回的 UUID",
+  "sql": "SELECT mtart, COUNT(*) AS total FROM mara GROUP BY mtart",
+  "limit": 100
+}
+```
+
+SQL 必须以 SELECT 开始并包含 FROM。不接受注释、语句结束符（分号或结尾句点）、INTO、写语句、Client 切换、外部连接或 privileged access；引号内的这些文本可作为普通数据。校验采用保守规则，部分合法 ABAP SQL 也可能被拒绝；最终语法及权限仍由 SAP 检查。
+
+两个工具默认最多返回 100 行，上限 500；后端多取一行判断 `truncated`。返回 `columns`、`rows`、`row_count`、`limit`、`truncated` 和 `pagination_supported=false`。数值、日期、编号保留为字符串，不转换为 JavaScript 数字或日期，避免前导零及大数精度丢失。结果不缓存到请求去重表，不记录查询文本、筛选值或结果到操作日志。没有稳定排序或分页承诺，limit 只限制返回行数，不限制数据库扫描成本。沿用 HTTP 请求 15 秒超时和 4 MiB 响应上限；客户端超时不保证后端立即取消执行。
+
+查询不需要开启 `write_enabled`，使用连接配置中的 Client 和 SAP 用户权限。`get_capabilities.data_query` 分别提供两个接口的 discovery `advertised` 标记；未声明不等于不支持，实际查询验证可用性。HTTP 404/405/501 返回 `CAPABILITY_UNSUPPORTED`（也可能是路由或服务配置缺失），401/403 保留认证或权限错误，不将其误判为版本不支持。支持的 CDS 类型、字段语法和具体接口兼容性仍需在目标 SAP 验证。
 
 `search_objects` 的完整类型如 `PROG/P` 会精确过滤，类型族如 `PROG` 返回该族对象；`limit` 默认 100，最大 500。精确类型搜索在后端类型族结果中最多扫描 501 条，`truncated=true` 表示结果可能不完整，可缩小搜索条件。包列表排除没有 `OBJECT_URI` 的分类节点，先过滤再限量；返回后端节点字段，不提供分页游标。读取仅支持对象发现的主源码，不支持任意 include 片段选择。
 
