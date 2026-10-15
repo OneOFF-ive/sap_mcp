@@ -1,5 +1,19 @@
 # Security Notes
 
+## Review and fixes (2026-10-15)
+
+The local management API authentication guard now matches paths case-insensitively, consistent with Express routing. Previously uppercase paths such as `/API/state` bypassed the lowercase `/api/` middleware check; management mutations including token creation could also bypass that guard. Regression tests enforce authentication and same-origin checks across mixed-case paths. Restart all old processes to apply the fix; it is not a change to already running services.
+
+The SELECT guard now rejects both `CLIENT` and `CLIENTS` outside quoted values, including `USING ALL CLIENTS`, `USING CLIENTS IN` and nested queries. Previously the plural form could bypass the configured-Client policy, subject to SAP backend support and authorization.
+
+MCP initialization provides client instructions for data handling and safe write recovery. Parameter descriptions explain identifiers, filters and revision/request IDs. Tool arguments are limited to 2000 combined object members/array elements before schema validation. Client instructions are guidance, not an enforcement boundary; server validation and SAP authorizations remain required.
+
+## Backend transport and access scope
+
+Backend connections accept HTTP and HTTPS. Prefer HTTPS with a trusted server certificate; the bounded Axios client uses default TLS verification, forbids cross-origin requests and never follows redirects, including HTTPS-to-HTTP redirects. No insecure-certificate switch or automatic downgrade is provided. Existing HTTP connections remain compatible and still send authentication and data without transport encryption. HTTPS has not been validated against a live SAP system in this review.
+
+All valid MCP tokens share configured connections and SAP-user privileges; there is no per-token system, table or row-level policy. Keep SAP users appropriately scoped. Query row limits do not bound database scan cost, and read operations may recreate a cached session and retry once. Enhancement version probes cannot establish BAdI/CMOD runtime enablement.
+
 ## Data Queries
 
 `query_table` and `query_sql` use stateless SAP Data Preview requests and do not require `write_enabled`. The table tool validates identifiers and escapes string literals; the SQL tool conservatively accepts SELECT with FROM and rejects mutations, comments, statement terminators, INTO, client overrides, external connections and privileged access. SAP still controls syntax, entity visibility and authorizations. Queries use the configured Client and never acquire editor locks. Returned rows default to 100 and are capped at 500, with one extra row requested to detect truncation. This does not cap database scan cost. HTTP requests retain the 15-second timeout and 4 MiB response bound; timeout does not guarantee server-side cancellation. Query text, filter values and results are not added to application audit logs or the write-request cache. Raw string results preserve identifiers and numeric precision. Discovery advertisement is reported separately for DDIC and freestyle and does not establish authorization or confirmed availability.

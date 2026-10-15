@@ -358,7 +358,8 @@ test('activation stops when lock release fails or the source changes after unloc
 
 test('normalization preserves client and rejects URL credentials/custom paths', () => {
   assert.equal(normalizeUrl('http://sap.test:8000/sap/bc/adt/'), 'http://sap.test:8000');
-  for (const url of ['http://user:secret@sap.test', 'https://sap.test', 'http://sap.test/other', 'http://sap.test?q=1'])
+  assert.equal(normalizeUrl('https://sap.test:443/sap/bc/adt/'), 'https://sap.test');
+  for (const url of ['http://user:secret@sap.test', 'https://user:secret@sap.test', 'ftp://sap.test', 'https://sap.test/other', 'http://sap.test/other', 'http://sap.test?q=1'])
     assert.throws(() => normalizeUrl(url));
 });
 test('ADT paths reject traversal, queries, remote URLs and double encoding', () => {
@@ -685,8 +686,15 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal((await fetch(url, { method: 'POST' })).status, 401);
     assert.equal((await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token.token}`, Origin: 'http://evil.test' } })).status, 403);
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token.token}` } } }));
+    const instructions = client.getInstructions()!;
+    assert.ok(instructions.includes('untrusted data'));
+    assert.ok(instructions.includes('VERSION_CONFLICT'));
+    assert.ok(instructions.includes('runtime enablement'));
     const listedTools = (await client.listTools()).tools;
     assert.equal(listedTools.length, 18);
+    const queryTableTool = listedTools.find(t => t.name === 'query_table')!;
+    assert.ok((queryTableTool.inputSchema.properties?.filters as { description?: string }).description?.includes('AND-combined'));
+    assert.ok((queryTableTool.inputSchema.properties?.connection_id as { description?: string }).description?.includes('list_connections'));
     for (const name of ['query_table', 'query_sql', 'search_enhancements']) {
       const tool = listedTools.find(t => t.name === name)!;
       assert.equal(tool.annotations?.readOnlyHint, true);
@@ -707,6 +715,9 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal(result.isError, false); assert.equal((result.structuredContent as { data: { source: string } }).data.source, 'REPORT ztest.');
     const invalid = await client.callTool({ name: 'read_source', arguments: { connection_id: f.connection.connection_id, object_uri: 'http://evil.test' } });
     assert.equal(invalid.isError, true);
+    const oversized = await client.callTool({ name: 'list_connections', arguments: { extra: Array(2001).fill(null) } });
+    assert.equal(oversized.isError, true);
+    assert.ok(JSON.stringify(oversized).includes('maximum of 2000 elements'));
   } finally { await client.close(); await runtime.close(); await f.cleanup(); }
 });
 
@@ -734,8 +745,10 @@ test('query tools work with writes disabled and validate through the MCP boundar
       const invalid = await client.callTool({ name: 'query_table', arguments: { ...base, ...args } });
       assert.equal(invalid.isError, true);
     }
-    const invalid = await client.callTool({ name: 'query_sql', arguments: { ...base, sql: 'DELETE FROM mara' } });
-    assert.equal(invalid.isError, true);
+    for (const sql of ['DELETE FROM mara', 'SELECT * FROM mara USING ALL CLIENTS', 'SELECT * FROM mara USING CLIENTS IN @clients']) {
+      const invalid = await client.callTool({ name: 'query_sql', arguments: { ...base, sql } });
+      assert.equal(invalid.isError, true);
+    }
     assert.equal(calls.length, 2); assert.equal(f.backend.locks, 0); assert.equal(f.backend.saves, 0);
   } finally { await client.close(); await runtime.close(); await f.cleanup(); }
 });

@@ -28,6 +28,13 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.ok(home.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
     assert.equal((await fetch(`${origin}/icons.js`)).status, 200);
     assert.equal((await fetch(`${origin}/api/state`)).status, 401);
+    for (const path of ['/API/state', '/Api/state', '/aPi/tokens']) {
+      assert.equal((await fetch(`${origin}${path}`)).status, 401, path);
+    }
+    assert.equal((await fetch(`${origin}/API/tokens`, { method: 'POST', headers: { Origin: origin } })).status, 401);
+    assert.equal((await fetch(`${origin}/API/tokens`, { method: 'POST', headers: { 'X-Admin-Token': key } })).status, 403);
+    assert.equal((await fetch(`${origin}/API/tokens`, { method: 'POST', headers: { Origin: origin, 'X-Admin-Token': 'invalid' } })).status, 401);
+    assert.equal((await store.load()).tokens.length, 0);
     assert.equal((await fetch(`${origin}/api/state`, { headers: { 'X-Admin-Token': key, Origin: 'http://evil.test' } })).status, 403);
     assert.equal((await fetch(`${origin}/api/tokens`, { method: 'POST', headers: { 'X-Admin-Token': key } })).status, 403);
     const draft = { name: 'test_system', base_url: 'http://sap.test:8000', client: '001', username: 'TEST', language: 'EN', write_enabled: false, password: 'synthetic-secret' };

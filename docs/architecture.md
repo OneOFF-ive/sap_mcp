@@ -4,7 +4,7 @@
 
 ## 1. 目标与范围
 
-提供不依赖 VS Code 的本地 Web 管理界面与 CLI，通过 HTTP ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。
+提供不依赖 VS Code 的本地 Web 管理界面与 CLI，通过 HTTP/HTTPS ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。后端 HTTPS 沿用默认 TLS 校验，不自动降级；本机管理与 MCP 监听仍使用 loopback HTTP。
 
 当前功能包括：
 

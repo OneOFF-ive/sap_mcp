@@ -8,20 +8,21 @@ import { Operations, type Input } from './operations.js';
 import { safeError } from './errors.js';
 import { functionModuleSyntaxHelp } from './function-help.js';
 import { tableQuerySchema, sqlQuerySchema } from './data-query.js';
+import { clientInstructions } from './client-guidance.js';
 
 const id = z.string().uuid();
-const connection = { connection_id: id };
-const uri = z.string().min(1).max(2048);
+const connection = { connection_id: id.describe('Stable UUID returned by list_connections. Select the intended SAP system and Client; do not use the connection name here.') };
+const uri = z.string().min(1).max(2048).describe('Relative /sap/bc/adt/... URI returned by SAP discovery or a prior tool. No full URLs, query strings or fragments. Never invent source paths.');
 const version = z.enum(['active', 'inactive']);
 const limit = z.number().int().min(1).max(500).default(100);
 const pkg = z.string().regex(/^[A-Za-z0-9_$/]+$/).max(128);
 const transport = z.string().regex(/^[A-Za-z0-9]+$/).max(30).optional()
   .describe('Required on each create or update_source call when SAP requires change recording, not merely because a package is not $TMP. If omitted, the service queries SAP; confirmed local/no-recording packages need no task. Unknown requirements block writing. Tasks are not remembered or inherited. Use list_transport_requests or ask the user; never invent a task ID.');
-const requestId = z.string().min(1).max(128);
+const requestId = z.string().min(1).max(128).describe('Unique ID for one intended write, scoped to this connection across all write tools. Identical ID and arguments return a cached result only in this service process. Inspect SAP state before retrying uncertain writes with a new ID.');
 const schemas = {
   list_connections: z.object({}).strict(),
   get_capabilities: z.object(connection).strict(),
-  search_enhancements: z.object({ ...connection, query: z.string().trim().min(1).max(128), type: z.enum(['all', ...enhancementTypes]).default('all'), limit }).strict(),
+  search_enhancements: z.object({ ...connection, query: z.string().trim().min(1).max(128).describe('Repository name pattern, e.g. Z* or *MATERIAL*. Use a narrow pattern where possible.'), type: z.enum(['all', ...enhancementTypes]).default('all').describe('SMOD exits; CMOD projects; SXSD/SXCI classic BAdI definitions/implementations; ENHS/ENHO spots/implementations; ENSC/ENHC composite spots/implementations. all queries every family.'), limit }).strict(),
   query_table: tableQuerySchema.extend(connection),
   query_sql: sqlQuerySchema.extend(connection),
   search_objects: z.object({ ...connection, query: z.string().min(1).max(128), type: z.string().max(30).optional(), limit }).strict(),
@@ -37,7 +38,7 @@ const schemas = {
   list_function_group_members: z.object({ ...connection, function_group_uri: uri, limit }).strict(),
   get_function_group: z.object({ ...connection, function_group_uri: uri }).strict(),
   update_source: z.object({ ...connection, object_uri: uri.optional(), source_uri: uri.optional(), source: z.string().max(1024 * 1024),
-    expected_revision: z.string().regex(/^[a-f0-9]{64}$/), transport_task: transport, request_id: requestId }).strict()
+    expected_revision: z.string().regex(/^[a-f0-9]{64}$/).describe('Exact revision from read_source for this source and connection. On conflict reread and merge; do not substitute a new revision without reviewing the source.'), transport_task: transport, request_id: requestId }).strict()
     .refine(p => Boolean(p.object_uri || p.source_uri), { message: 'Provide object_uri or source_uri' }),
   syntax_check: z.object({ ...connection, object_uri: uri, version: version.default('inactive') }).strict(),
   activate_objects: z.object({ ...connection, objects: z.array(z.object({ object_uri: uri,
@@ -67,7 +68,7 @@ const descriptions: Record<keyof typeof schemas, string> = {
   create_transport_request: 'Create a new workbench development transport request for an existing or intended supported ABAP object and target package. Requires write_enabled and request_id. Query existing requests first and confirm that the user wants a NEW request. SAP CTS preflight must require recording. Returns the SAP number and verified parent request and current-user tasks separately; never assume the returned number is a task. Does not create a program, select a default task, release transports or support arbitrary Customizing requests. On unknown outcome or TRANSPORT_VERIFY_FAILED query list_transport_requests before any retry; do not blindly create duplicates.'
 };
 export function makeMcp(operations: Operations) {
-  const server = new McpServer({ name: 'sap-mcp', version: '0.1.0' });
+  const server = new McpServer({ name: 'sap-mcp', version: '0.1.0' }, { instructions: clientInstructions, maxToolInputElements: 2000 });
   for (const name of Object.keys(schemas) as (keyof typeof schemas)[]) {
     const write = ['create_program', 'create_function_group', 'create_function_module', 'create_transport_request', 'update_source', 'activate_objects'].includes(name);
     const description = name === 'update_source'

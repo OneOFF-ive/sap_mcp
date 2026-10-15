@@ -33,6 +33,9 @@ test('SQL guard rejects mutations, multiple statements, comments and client bypa
     'SELECT * FROM mara -- comment', 'SELECT /* comment */ * FROM mara',
     'SELECT * FROM mara\n* comment', 'SELECT * FROM mara CLIENT SPECIFIED',
     "SELECT * FROM mara USING CLIENT '000'", 'SELECT * FROM x WITH PRIVILEGED ACCESS',
+    'SELECT * FROM mara USING ALL CLIENTS',
+    'SELECT * FROM mara USING CLIENTS IN @clients',
+    'SELECT * FROM mara WHERE matnr IN ( SELECT matnr FROM mara USING ALL CLIENTS )',
     "SELECT * FROM mara WHERE matnr = 'oops", 'SELECT 1', 'SELECT * FROM mara CONNECTION x',
     'SELECT * FROM mara\nUPDATE mara SET mtart = 1']) assert.throws(() => readOnlySql({ sql }), /single SELECT/);
 });

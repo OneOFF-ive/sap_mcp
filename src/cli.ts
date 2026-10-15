@@ -23,7 +23,7 @@ async function mutate(action: () => Promise<void>, connectionChange = true) {
   finally { await releaseConfig?.(); await releaseRuntime?.(); }
 }
 async function promptConnection(name: string, old?: Connection) {
-  const base_url = await input({ message: 'ADT HTTP server URL:', default: old?.base_url });
+  const base_url = await input({ message: 'ADT server URL (HTTPS recommended):', default: old?.base_url });
   const client = await input({ message: 'Client (three digits):', default: old?.client ?? '100' });
   const username = await input({ message: 'SAP username:', default: old?.username });
   const language = await input({ message: 'Language:', default: old?.language ?? 'EN' });

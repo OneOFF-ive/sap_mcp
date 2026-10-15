@@ -17,9 +17,9 @@ const configSchema = z.object({ schema_version: z.literal(1), connections: z.arr
 export type Config = z.infer<typeof configSchema>;
 export function normalizeUrl(value: string): string {
   const u = new URL(value);
-  if (u.protocol !== 'http:' || u.username || u.password || u.search || u.hash ||
+  if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash ||
       !['/', '/sap/bc/adt', '/sap/bc/adt/'].includes(u.pathname)) {
-    throw new Error('Use an HTTP server URL without credentials, query or custom path');
+    throw new Error('Use an HTTP or HTTPS server URL without credentials, query or custom path');
   }
   return u.origin;
 }

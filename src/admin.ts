@@ -44,7 +44,8 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
     let released = false;
     const release = () => { if (!released) { released = true; active--; } };
     res.once('finish', release); res.once('close', release);
-    if (req.path.startsWith('/api/')) {
+    // Express routes are case-insensitive by default; authentication must match that policy.
+    if (/^\/api(?:\/|$)/i.test(req.path)) {
       const supplied = Buffer.from(req.headers['x-admin-token'] as string ?? '');
       const expected = Buffer.from(key);
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) { res.sendStatus(401); return; }
@@ -140,7 +141,7 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
   app.use((_req, res) => res.sendStatus(404));
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     const response = error instanceof AppError ? { code: error.code, message: error.message }
-      : error instanceof z.ZodError ? { code: 'INVALID_INPUT', message: '请检查连接名称、HTTP 地址、Client 和语言格式' }
+      : error instanceof z.ZodError ? { code: 'INVALID_INPUT', message: '请检查连接名称、HTTP/HTTPS 地址、Client 和语言格式' }
       : { code: safeError(error).code, message: '操作失败，请检查连接信息、凭据或端口占用情况' };
     res.status(400).json({ error: response });
   });
