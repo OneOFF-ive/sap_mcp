@@ -83,6 +83,7 @@ test('function interface save normalization and group activation verification wo
 test('function ADT adapter creates groups/modules and edits module source with its own lock', async () => {
   const events: string[] = []; const created: Record<string, unknown>[] = [];
   const activationBodies: string[] = [];
+  const moduleCorrections: (string | null)[] = [];
   let rejectContainer = false;
   let active = 'FUNCTION zmodule.\nENDFUNCTION.'; let inactive = active;
   const server = createServer(async (req, res) => {
@@ -92,7 +93,16 @@ test('function ADT adapter creates groups/modules and edits module source with i
     if (url.pathname.endsWith('/compatibility/graph')) { res.setHeader('x-csrf-token', 'csrf'); res.end('<graph/>'); }
     else if (url.pathname.endsWith('/validation')) res.end('<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><SEVERITY>SUCCESS</SEVERITY><CHECK_RESULT>X</CHECK_RESULT></DATA></asx:values></asx:abap>');
     else if (req.method === 'POST' && ['/sap/bc/adt/functions/groups', `${group}/fmodules`].includes(url.pathname)) {
+      if (url.pathname === `${group}/fmodules`) {
+        moduleCorrections.push(url.searchParams.get('corrNr'));
+        if (url.searchParams.get('corrNr') === 'DEVK904717') {
+          res.statusCode = 403; res.end('UXX include is already locked in parent request'); return;
+        }
+      }
       created.push(new XMLParser({ ignoreAttributes: false }).parse(body)); events.push(`create:${url.pathname}`); res.statusCode = 201; res.end();
+    } else if (url.pathname === '/sap/bc/adt/cts/transportrequests') {
+      assert.equal(req.headers.accept, 'application/vnd.sap.adt.transportorganizertree.v1+xml');
+      res.end('<tm:root xmlns:tm="test"><tm:workbench><tm:target tm:name="DEV"><tm:modifiable><tm:request tm:number="DEVK904716" tm:owner="TEST" tm:status="D"><tm:task tm:number="DEVK904717" tm:owner="TEST" tm:status="D"/></tm:request></tm:modifiable></tm:target></tm:workbench></tm:root>');
     } else if (action) {
       events.push(`${action}:${url.pathname}`);
       if (![group, moduleUri].includes(url.pathname)) { res.statusCode = 400; res.end('Unexpected lock target'); return; }
@@ -135,6 +145,16 @@ test('function ADT adapter creates groups/modules and edits module source with i
     const moduleXml = created[1]['fmodule:abapFunctionModule'] as Record<string, unknown>;
     assert.equal(groupXml['@_adtcore:type'], 'FUGR/F'); assert.equal(groupXml['@_adtcore:description'], 'A & B');
     assert.equal((moduleXml['adtcore:containerRef'] as Record<string, unknown>)['@_adtcore:uri'], group);
+    const transportHandle = await backend.lock(group);
+    try {
+      assert.equal(await backend.createFunctionModule('ZMODULE', 'Transport module', group, 'DEVK904717'), moduleUri);
+      assert.deepEqual(moduleCorrections, [null, 'DEVK904716']);
+      for (const invalid of ['DEVK904716', 'DEVK999999']) {
+        await assert.rejects(backend.createFunctionModule('ZMODULE', 'Invalid transport', group, invalid),
+          (error: any) => error.code === 'TRANSPORT_TASK_INVALID');
+      }
+      assert.equal(moduleCorrections.length, 2);
+    } finally { await backend.unlock(group, transportHandle); }
     const members = await backend.listFunctionGroupMembers(group, 10); assert.equal(members.members.length, 2); assert.equal(members.truncated, false);
     assert.equal((await backend.listFunctionGroupMembers(group, 1)).truncated, true);
     const before = await backend.functionGroupSnapshot(group); assert.equal(before.members.length, 2);

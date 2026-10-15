@@ -7,6 +7,7 @@ import { digest } from './config.js';
 import { AppError, safeError } from './errors.js';
 import { functionDefinition } from './function-signature.js';
 import { parseTransportList, parseTransportDetails } from './transports.js';
+import { groupActivationBody, activationResponse } from './activation.js';
 
 export type Version = 'active' | 'inactive';
 export type ProgramKind = 'report' | 'include' | 'module_pool' | 'subroutine_pool';
@@ -215,9 +216,7 @@ export class AdtBackend implements Backend {
   }
   async lock(object: string) { return (await this.client.lock(this.lockUri(object))).LOCK_HANDLE; }
   async unlock(object: string, handle: string) { await this.client.unLock(this.lockUri(object), handle); }
-  async save(source: string, code: string, handle: string, transport?: string) {
-    programUri(source);
-    let correction = transport;
+  private async correctionRequest(transport?: string): Promise<string | undefined> {
     if (transport) {
       const listed = await this.transports();
       const matches = listed.workbench.flatMap(target => target.modifiable)
@@ -226,12 +225,15 @@ export class AdtBackend implements Backend {
           ['D', 'modifiable'].includes(task['tm:status'])));
       const parents = [...new Set(matches.map(request => request['tm:number']))];
       if (parents.length !== 1 || !/^[A-Z0-9]{3}K[0-9]{6}$/.test(parents[0])) {
-        throw new AppError('TRANSPORT_TASK_INVALID', 'Cannot resolve the supplied task to one modifiable workbench request for the configured user. No source PUT was sent.');
+        throw new AppError('TRANSPORT_TASK_INVALID', 'Cannot resolve the supplied task to one modifiable workbench request for the configured user. No create or save request was sent.');
       }
-      // Source PUT expects the correction request; creation accepts its task.
-      // Never substitute an unrelated request or retry an uncertain write.
-      correction = parents[0];
+      return parents[0];
     }
+    return undefined;
+  }
+  async save(source: string, code: string, handle: string, transport?: string) {
+    programUri(source);
+    const correction = await this.correctionRequest(transport);
     await this.client.setObjectSource(source, code, handle, correction);
   }
   async create(name: string, description: string, pkg: string, transport?: string, kind: ProgramKind = 'report') {
@@ -274,13 +276,16 @@ export class AdtBackend implements Backend {
   async createFunctionModule(name: string, description: string, group: string, transport?: string) {
     const groupUri = functionGroupUri(group);
     if (group !== groupUri) throw new AppError('INVALID_URI', 'Specify the parent function group itself');
+    // Adding a module updates the existing group's UXX include. Like source PUT,
+    // this needs the parent correction request, not the task used to create the group.
+    const correction = await this.correctionRequest(transport);
     const parent = await this.client.objectStructure(groupUri);
     if (parent.metaData['adtcore:type'] !== 'FUGR/F') throw new AppError('CAPABILITY_UNSUPPORTED', 'Parent is not a function group');
     const validation = await this.client.validateNewObject({ objtype: 'FUGR/FF', objname: name, description, fugrname: parent.metaData['adtcore:name'] });
     if (!validation.success) throw new AppError('CREATE_VALIDATION_FAILED', 'SAP rejected function module creation', validation);
     const uri = `${groupUri}/fmodules/${encodeURIComponent(name.toLowerCase())}`;
     await this.createFunctionXml(`${groupUri}/fmodules`, 'fmodule', 'abapFunctionModule', 'FUGR/FF', name, description,
-      { 'adtcore:containerRef': { '@_adtcore:name': parent.metaData['adtcore:name'], '@_adtcore:type': 'FUGR/F', '@_adtcore:uri': groupUri } }, transport);
+      { 'adtcore:containerRef': { '@_adtcore:name': parent.metaData['adtcore:name'], '@_adtcore:type': 'FUGR/F', '@_adtcore:uri': groupUri } }, correction);
     await this.verifyFunctionCreated(uri, 'FUGR/FF'); return uri;
   }
   private async createFunctionXml(path: string, prefix: string, root: string, type: string, name: string,
@@ -356,7 +361,16 @@ export class AdtBackend implements Backend {
       for (const member of members) {
         try {
           // Use the same minimal reference format that works for single-object activation.
-          const result = await this.client.activate(member.name, member.uri);
+          let result = await this.client.activate(member.name, member.uri);
+          if (result.inactive.length && !result.messages.some(message => /[EAX]/.test(message.type))) {
+            const body = groupActivationBody(result, object, snapshot.members.map(member => member.object_uri), this.connection.username);
+            const response = await this.client.httpClient.request('/sap/bc/adt/activation', {
+              method: 'POST', qs: { method: 'activate', preauditRequested: false },
+              headers: { 'Content-Type': 'application/xml', Accept: 'application/xml' }, body
+            });
+            const completed = activationResponse(response.body);
+            result = { ...completed, messages: [...result.messages, ...completed.messages] };
+          }
           results.push({ object_uri: member.uri, ...result });
           if (!result.success) return { success: false, messages: results.flatMap(r => r.messages), member_results: results };
         } catch (error) {
