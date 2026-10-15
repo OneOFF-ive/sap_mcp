@@ -242,6 +242,42 @@ test('CTS preflight distinguishes explicit no-recording from missing or failed c
   } finally { await backend.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
+test('transport creation escapes its payload and distinguishes returned task from verified parent', async () => {
+  let reply = '/sap/bc/adt/cts/transports/DEVK900002\n';
+  let payload: any; let posts = 0;
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url!, 'http://local');
+    res.setHeader('Content-Type', 'application/xml');
+    if (url.pathname.endsWith('/compatibility/graph')) { res.setHeader('x-csrf-token', 'test'); res.end('<graph/>'); }
+    else if (url.pathname === '/sap/bc/adt/cts/transports') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      posts++; payload = new XMLParser().parse(body)['asx:abap']['asx:values'].DATA;
+      res.setHeader('Content-Type', 'text/plain'); res.statusCode = 201; res.end(reply);
+    } else if (url.pathname === '/sap/bc/adt/cts/transportrequests') {
+      assert.equal(req.headers.accept, 'application/vnd.sap.adt.transportorganizertree.v1+xml');
+      assert.equal(url.searchParams.get('user'), 'TEST');
+      res.end('<tm:root xmlns:tm="test"><tm:workbench><tm:target tm:name="DEV"><tm:modifiable><tm:request tm:number="DEVK900001" tm:owner="TEST" tm:status="modifiable"><tm:task tm:number="DEVK900002" tm:owner="TEST" tm:status="modifiable"/><tm:task tm:number="DEVK900003" tm:owner="OTHER" tm:status="modifiable"/></tm:request></tm:modifiable></tm:target></tm:workbench></tm:root>');
+    } else res.end('');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const backend = new AdtBackend(connectionSchema.parse({ connection_id: randomUUID(), name: 'mock',
+    base_url: `http://127.0.0.1:${address.port}`, client: '001', language: 'EN', username: 'TEST' }), 'fake');
+  const uri = '/sap/bc/adt/programs/programs/ztest';
+  try {
+    assert.equal(await backend.createTransportRequest(uri, 'ZPACKAGE', 'A & B <test>'), 'DEVK900002');
+    assert.equal(payload.REQUEST_TEXT, 'A & B <test>'); assert.equal(payload.DEVCLASS, 'ZPACKAGE');
+    assert.equal(payload.REF, uri); assert.equal(payload.OPERATION, 'I');
+    const verified = await backend.verifyTransportRequest('DEVK900002');
+    assert.equal(verified?.request_number, 'DEVK900001');
+    assert.deepEqual(verified?.tasks, [{ task_number: 'DEVK900002', owner: 'TEST', status: 'modifiable' }]);
+    assert.equal(await backend.verifyTransportRequest('DEVK999999'), undefined);
+    reply = 'not a transport number';
+    await assert.rejects(backend.createTransportRequest(uri, 'ZPACKAGE', 'Test'), error => safeError(error).code === 'TRANSPORT_RESPONSE_INVALID');
+    assert.equal(posts, 2);
+  } finally { await backend.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test('SAP authentication failures are classified without exposing response data', async () => {
   const server = createServer((_req, res) => { res.statusCode = 401; res.end('secret backend detail'); });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -129,6 +129,7 @@ Web 管理端口独立于 MCP，默认监听 127.0.0.1:8766。启动生成随机
 | `syntax_check` | 连接、`object_uri`、`version` | 是否通过、结构化诊断 |
 | `activate_objects` | 连接、对象 URI 与预期 revision 列表、`request_id` | 各对象结果及部分失败信息 |
 | `list_transport_requests` | 连接 | 当前用户的后端传输请求数据，无状态过滤参数 |
+| `create_transport_request` | 连接、object_uri、package_name、description、request_id | 创建返回编号、读回确认的父请求及当前用户任务；不释放 |
 
 `version` 使用 `active` 或 `inactive`；不存在指定版本时明确返回错误，不静默切换版本。`revision` 是服务封装的不透明值，包含版本上下文；源码 SHA-256 用于补充校验，不作为历史恢复承诺。
 
@@ -166,7 +167,11 @@ CSRF 获取和更新由适配器处理。只有明确尚未执行的请求才可
 
 先通过 ADT 库进行命名和包验证，再发送结构化 XML 到 programs/programs 或 programs/includes 集合；Program 的 program:programType 明确指定。创建后按对象路径读取元数据验证 adtcore:type 和 Program 子类型。SAP 拒绝或类型不符时返回错误，不自动回滚已创建对象。模块池屏幕等附属资源不由此工具创建。
 
-验证连接写入策略、命名、目标包、对象不存在及传输任务，再通过 ADT 创建对象，返回真实 URI。远程创建存在竞态，以 SAP 返回为准。`$TMP` 可省略任务；其他包省略任务时先执行 ADT transportchecks 检查，通过独立无状态会话传入对象 URI 和包，CTS OPERATION=I 表示对象加入变更记录。仅成功响应 RESULT=S 且 RECORDING、KORRFLAG 明确为空时确认无需任务；RECORDING=X 时要求任务。其他响应及查询失败均阻止写入，返回 TRANSPORT_CHECK_UNAVAILABLE。显式任务直接交由 SAP 校验，不缓存查询、不自动选任务、不试写探测，也不自动创建或释放请求。
+验证连接写入策略、命名、目标包、对象不存在及传输任务，再通过 ADT 创建对象，返回真实 URI。远程创建存在竞态，以 SAP 返回为准。`$TMP` 可省略任务；其他包省略任务时先执行 ADT transportchecks 检查，通过独立无状态会话传入对象 URI 和包，CTS OPERATION=I 表示对象加入变更记录。仅成功响应 RESULT=S 且 RECORDING、KORRFLAG 明确为空时确认无需任务；RECORDING=X 时要求任务。其他响应及查询失败均阻止写入，返回 TRANSPORT_CHECK_UNAVAILABLE。显式任务直接交由 SAP 校验，不缓存查询、不自动选任务、不试写探测。源码及对象创建流程不自动创建传输请求；创建请求必须显式调用 create_transport_request，不提供释放请求功能。
+
+create_transport_request 是写操作，复用连接 write_enabled、串行队列、新会话预检、JSONL 日志和 request_id 索引。针对已存在或待创建的 Program、Include、函数组或函数模块及目标包，先执行只读 CTS 检查；明确无需记录或无法确认时，不发出创建。通过 ADT /cts/transports 创建后验证返回编号格式，再通过当前用户传输列表，在可修改 Workbench 请求中查找该编号或其所属任务，以区分请求与任务。仅返回当前用户最多 20 个任务及截断标志，不自动选定任务，不创建源码对象，不释放请求。
+
+创建后读回失败返回 TRANSPORT_VERIFY_FAILED/outcome=partial，保留 created=true、transport_number 和后续查询指引；创建响应不含有效编号返回 TRANSPORT_RESPONSE_INVALID/outcome=unknown，不能断言未创建。网络失败不自动重放；本地 request_id 索引仅覆盖当前进程，不保证跨重启恰好创建一次。未知结果必须先查询，未提供自动回滚或删除请求功能。
 
 创建成功后 agent 使用返回 URI 读取初始源码，再调用修改与激活。后续失败不自动删除已创建对象。
 

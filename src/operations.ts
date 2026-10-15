@@ -18,7 +18,7 @@ export type Result = { operation_id: string; status: string; completed_steps: st
   outcome?: string; write_dispatched?: boolean; error?: ReturnType<typeof safeError>; warnings?: string[] };
 type Context = { steps: string[]; dispatched: boolean; confirmed: boolean; warnings: string[]; source_save?: SourceSaveState; event: (phase: string) => Promise<void> };
 export type BackendFactory = (c: Connection, password: string) => Backend;
-const writes = new Set(['create_program', 'create_function_group', 'create_function_module', 'update_source', 'activate_objects']);
+const writes = new Set(['create_program', 'create_function_group', 'create_function_module', 'create_transport_request', 'update_source', 'activate_objects']);
 const recoverableSessionErrors = new Set(['AUTH_FAILED', 'CSRF_FAILED', 'HTTP_FORBIDDEN', 'ADT_ERROR', 'OUTCOME_UNKNOWN']);
 const cachedResultLimit = 32 * 1024;
 function cacheResult(result: Result): Result {
@@ -189,6 +189,32 @@ export class Operations {
       case 'read_source': return b.read(adtUri(p.object_uri!), p.version ?? 'active', p.source_uri);
       case 'syntax_check': return b.check(adtUri(p.object_uri!), p.version ?? 'inactive');
       case 'list_transport_requests': return b.transports();
+      case 'create_transport_request': {
+        if (!b.createTransportRequest || !b.verifyTransportRequest || !b.transportRequirement) {
+          throw new AppError('CAPABILITY_UNSUPPORTED', 'Transport request creation or verification is unavailable');
+        }
+        const object = programUri(p.object_uri!);
+        if (object !== p.object_uri) throw new AppError('INVALID_URI', 'Provide an object URI, not its source URI');
+        if (p.package_name!.toUpperCase() === '$TMP') throw new AppError('TRANSPORT_NOT_REQUIRED', 'Temporary package $TMP does not need a development transport request');
+        const requirement = await b.transportRequirement(object, p.package_name!, 'I');
+        if (requirement === 'not_required') throw new AppError('TRANSPORT_NOT_REQUIRED', 'SAP reports no change recording requirement for this object and package');
+        if (requirement !== 'required') throw new AppError('TRANSPORT_CHECK_UNAVAILABLE', 'Cannot determine the CTS requirement; no request was created');
+        await ctx.event('started');
+        ctx.dispatched = true;
+        const number = await b.createTransportRequest(object, p.package_name!, p.description!);
+        ctx.confirmed = true;
+        const recovery = { created: true, transport_number: number,
+          next_action: { tool: 'list_transport_requests', arguments: { connection_id: c.connection_id } },
+          guidance: 'Creation was accepted. Query requests and tasks before retrying; do not create another request blindly. The returned number may be a request or a task.' };
+        await ctx.event('created');
+        let verified;
+        try { verified = await b.verifyTransportRequest(number); }
+        catch (error) { throw new AppError('TRANSPORT_VERIFY_FAILED', 'SAP accepted creation but request readback failed', { ...recovery, cause: safeError(error) }); }
+        if (!verified) throw new AppError('TRANSPORT_VERIFY_FAILED', 'Created number was not found in the current user modifiable workbench requests', recovery);
+        await ctx.event('verified');
+        return { ...recovery, ...verified, released: false,
+          guidance: 'Use a confirmed modifiable task belonging to the configured SAP user as transport_task. Do not confuse the parent request with a task. No request was released and no source was changed.' };
+      }
       case 'list_function_group_members': {
         if (!b.listFunctionGroupMembers) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function group browsing unavailable');
         return b.listFunctionGroupMembers(p.function_group_uri!, p.limit ?? 100);

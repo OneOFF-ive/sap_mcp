@@ -37,7 +37,9 @@ const schemas = {
   syntax_check: z.object({ ...connection, object_uri: uri, version: version.default('inactive') }).strict(),
   activate_objects: z.object({ ...connection, objects: z.array(z.object({ object_uri: uri,
     expected_revision: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).min(1).max(20), request_id: requestId }).strict(),
-  list_transport_requests: z.object(connection).strict()
+  list_transport_requests: z.object(connection).strict(),
+  create_transport_request: z.object({ ...connection, object_uri: uri.describe('Existing or intended Program, Include, function group or function module object URI, not source/main.'),
+    package_name: pkg, description: z.string().trim().min(1).max(60), request_id: requestId }).strict()
 };
 const descriptions: Record<keyof typeof schemas, string> = {
   list_connections: 'List configured SAP connections with Client, language, username, backend URL and write policy. Confirm the intended system and Client before writing.',
@@ -53,12 +55,13 @@ const descriptions: Record<keyof typeof schemas, string> = {
   update_source: 'Save Program, Include, function module or group Include main source with expected revision. Does not activate. Inspect source_save even on errors: saved=true means SAP accepted the save, not that content verification passed; unknown requires reading backend state. Read inactive before retrying VERIFY_FAILED, and do not use its revision to blindly overwrite. Function modules use their own lock and ADT source-based declarations: TABLES T_RETURN TYPE BAPIRET2 OPTIONAL, not legacy STRUCTURE or Local Interface comments. EXCEPTIONS lists names only, e.g. INVALID_INPUT., never INVALID_INPUT = 1 (that is CALL FUNCTION syntax). End the definition with a period. Definition comments may be lost; implementation comments must not start with reserved prefixes *" or *"---. SAP may normalize the definition.',
   syntax_check: 'Check the requested version and return backend diagnostics.',
   activate_objects: 'Activate selected source objects with inactive revisions, or a function group with the revision from get_function_group. Group activation affects its members. May partially succeed.',
-  list_transport_requests: 'List the configured SAP user transport requests and tasks. Use this to find an existing modifiable task when SAP requires change recording; package names alone do not establish that requirement. Confirm the intended task with the user if ambiguous. Does not create or release requests or select a default task.'
+  list_transport_requests: 'List the configured SAP user transport requests and tasks. Use this to find an existing modifiable task when SAP requires change recording; package names alone do not establish that requirement. Confirm the intended task with the user if ambiguous. Does not create or release requests or select a default task.',
+  create_transport_request: 'Create a new workbench development transport request for an existing or intended supported ABAP object and target package. Requires write_enabled and request_id. Query existing requests first and confirm that the user wants a NEW request. SAP CTS preflight must require recording. Returns the SAP number and verified parent request and current-user tasks separately; never assume the returned number is a task. Does not create a program, select a default task, release transports or support arbitrary Customizing requests. On unknown outcome or TRANSPORT_VERIFY_FAILED query list_transport_requests before any retry; do not blindly create duplicates.'
 };
 export function makeMcp(operations: Operations) {
   const server = new McpServer({ name: 'sap-mcp', version: '0.1.0' });
   for (const name of Object.keys(schemas) as (keyof typeof schemas)[]) {
-    const write = ['create_program', 'create_function_group', 'create_function_module', 'update_source', 'activate_objects'].includes(name);
+    const write = ['create_program', 'create_function_group', 'create_function_module', 'create_transport_request', 'update_source', 'activate_objects'].includes(name);
     const description = name === 'update_source'
       ? 'Provide object_uri or the source_uri returned by read_source (both must match if supplied). The main source URI is discovered under lock; expected_revision from read_source is still required. Supported function definitions permit token-equivalent formatting only; see source_save.normalization_applied, difference and warnings for definition comment changes. Unknown grammar falls back to strict verification; implementation comparison is unchanged. ' + descriptions[name]
       : descriptions[name];

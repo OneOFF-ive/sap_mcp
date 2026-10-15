@@ -90,7 +90,7 @@ npm start -- token revoke <令牌ID>
 
 ## Tools 与工作流程
 
-已注册：`list_connections`、`get_capabilities`、`search_objects`、`list_package_objects`、`read_source`、`create_program`、`create_function_group`、`create_function_module`、`list_function_group_members`、`get_function_group`、`update_source`、`syntax_check`、`activate_objects`、`list_transport_requests`。
+已注册：`list_connections`、`get_capabilities`、`search_objects`、`list_package_objects`、`read_source`、`create_program`、`create_function_group`、`create_function_module`、`list_function_group_members`、`get_function_group`、`update_source`、`syntax_check`、`activate_objects`、`list_transport_requests`、`create_transport_request`。
 
 `search_objects` 的完整类型如 `PROG/P` 会精确过滤，类型族如 `PROG` 返回该族对象；`limit` 默认 100，最大 500。精确类型搜索在后端类型族结果中最多扫描 501 条，`truncated=true` 表示结果可能不完整，可缩小搜索条件。包列表排除没有 `OBJECT_URI` 的分类节点，先过滤再限量；返回后端节点字段，不提供分页游标。读取仅支持对象发现的主源码，不支持任意 include 片段选择。
 
@@ -159,6 +159,26 @@ npm start -- token revoke <令牌ID>
 当前没有结构化的函数参数维护工具。但在支持源码式接口声明的 SAP 系统中，read_source 返回的 FUNCTION 定义区可以包含参数，通过 update_source 保存、检查和激活可更新接口。可选 IMPORTING 整型参数和 TABLES 的 BAPIRET2 参数已完成保存、检查、激活与恢复验证；其他接口特性需要分别验证。不要把旧式 Local Interface 注释等同于可编辑声明。本服务不执行函数模块，也不自动生成 RFC/BAPI 属性。
 
 `list_connections` 返回连接名称、`connection_id`、`base_url`、`client`、`language`、`username` 和 `write_enabled`，不返回密码或令牌。写入前应确认目标系统和 Client，不能仅凭连接名称判断。
+
+### 创建传输请求
+
+先调用 `list_transport_requests` 检查是否已有合适的可修改任务。确认需要新请求后，使用 `create_transport_request`，例如：
+
+```json
+{
+  "connection_id": "由 list_connections 返回的 UUID",
+  "object_uri": "/sap/bc/adt/programs/programs/z_example",
+  "package_name": "Z_DEVELOP",
+  "description": "Example program development",
+  "request_id": "new-request-unique-id"
+}
+```
+
+`object_uri` 指向已存在或计划创建的受支持 ABAP 对象，不是 `source/main`；`package_name` 为该对象的目标包。工具面向仓库对象开发请求，传输属性由 SAP CTS 决定，不支持任意指定 Customizing 或复制请求类型。连接必须启用写入，CTS 必须确认需要记录变更；本地包无需记录或检查不明确时，不创建请求。
+
+返回的 `transport_number` 是 SAP 创建接口返回的编号，可能是请求号或任务号；`request_number` 是读回确认的可修改 Workbench 父请求号，`tasks` 列出当前用户的任务号、所有者及 SAP 状态（最多 20 条，另有 `tasks_truncated`）。先确认任务可修改，再把任务号传入后续创建或更新的 `transport_task`；不自动选择任务，也不保证 SAP 一定创建了当前用户的任务。工具不会创建程序、修改源码或释放请求。
+
+`TRANSPORT_VERIFY_FAILED` 表示创建已获 SAP 接受，但读回未能确认；错误详情保留已返回编号及查询指引。网络结果未知或 `TRANSPORT_RESPONSE_INVALID` 时，可能已产生请求，必须先查询再决定后续操作，不能直接换 `request_id` 重建。同一个 `request_id` 仅在本次服务进程内防止重复创建；重启后须重新核实实际状态。本功能已通过模拟 SAP 测试，实际后端兼容性需在目标系统验证。
 
 是否需要 `transport_task` 由 SAP 的变更记录要求决定，不能仅看包名。`$TMP` 可省略；其他包在省略任务时，会先调用只读 ADT CTS 检查：成功且明确无需记录变更时允许继续，明确需要时返回 `TRANSPORT_REQUIRED`，失败、字段缺失或结果不明确时返回 `TRANSPORT_CHECK_UNAVAILABLE`，均不会试写。已显式提供任务时直接交由 SAP 校验。服务不自动选择、记忆或继承任务；需要记录时每次创建和 `update_source` 都应显式提交。先用 `list_transport_requests` 查询任务，有歧义时询问用户，不把父请求号直接当成任务号。
 

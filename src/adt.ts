@@ -6,6 +6,7 @@ import type { Connection } from './config.js';
 import { digest } from './config.js';
 import { AppError, safeError } from './errors.js';
 import { functionDefinition } from './function-signature.js';
+import { parseTransportList, parseTransportDetails } from './transports.js';
 
 export type Version = 'active' | 'inactive';
 export type ProgramKind = 'report' | 'include' | 'module_pool' | 'subroutine_pool';
@@ -35,6 +36,7 @@ export function functionGroupUri(uri: string): string {
 export const isFunctionGroup = (uri: string) => /^\/sap\/bc\/adt\/functions\/groups\/[^/]+$/.test(uri);
 export type GroupSnapshot = { object_uri: string; revision: string; name: string; members: { object_uri: string; version: Version; revision: string; hash: string; definition_comments_hash?: string }[] };
 export type Source = { object_uri: string; source_uri: string; source: string; version: Version; revision: string; hash: string };
+export type CreatedTransport = { request_number: string; owner: string; status: string; tasks: { task_number: string; owner: string; status: string }[]; tasks_truncated: boolean };
 function verificationSource(source: string): string {
   const lines: string[] = [];
   let quote = '';
@@ -112,6 +114,8 @@ export interface Backend {
   check(object: string, version: Version): Promise<unknown>;
   activate(object: string, snapshot?: GroupSnapshot): Promise<{ success: boolean; messages: unknown[] }>;
   transports(): Promise<unknown>;
+  createTransportRequest?(object: string, pkg: string, description: string): Promise<string>;
+  verifyTransportRequest?(number: string): Promise<CreatedTransport | undefined>;
   close(): Promise<void>;
 }
 
@@ -212,7 +216,23 @@ export class AdtBackend implements Backend {
   async lock(object: string) { return (await this.client.lock(this.lockUri(object))).LOCK_HANDLE; }
   async unlock(object: string, handle: string) { await this.client.unLock(this.lockUri(object), handle); }
   async save(source: string, code: string, handle: string, transport?: string) {
-    programUri(source); await this.client.setObjectSource(source, code, handle, transport);
+    programUri(source);
+    let correction = transport;
+    if (transport) {
+      const listed = await this.transports();
+      const matches = listed.workbench.flatMap(target => target.modifiable)
+        .filter(request => request.tasks.some(task => task['tm:number'] === transport &&
+          task['tm:owner']?.toUpperCase() === this.connection.username.toUpperCase() &&
+          ['D', 'modifiable'].includes(task['tm:status'])));
+      const parents = [...new Set(matches.map(request => request['tm:number']))];
+      if (parents.length !== 1 || !/^[A-Z0-9]{3}K[0-9]{6}$/.test(parents[0])) {
+        throw new AppError('TRANSPORT_TASK_INVALID', 'Cannot resolve the supplied task to one modifiable workbench request for the configured user. No source PUT was sent.');
+      }
+      // Source PUT expects the correction request; creation accepts its task.
+      // Never substitute an unrelated request or retry an uncertain write.
+      correction = parents[0];
+    }
+    await this.client.setObjectSource(source, code, handle, correction);
   }
   async create(name: string, description: string, pkg: string, transport?: string, kind: ProgramKind = 'report') {
     const include = kind === 'include';
@@ -350,7 +370,72 @@ export class AdtBackend implements Backend {
     const metadata = await this.client.objectStructure(programUri(object), 'inactive');
     return this.client.activate(metadata.metaData['adtcore:name'], object);
   }
-  async transports() { return this.client.userTransports(this.connection.username); }
+  async transports() {
+    const response = await this.reader.httpClient.request('/sap/bc/adt/cts/transportrequests', {
+      qs: { user: this.connection.username, targets: true },
+      headers: { Accept: 'application/vnd.sap.adt.transportorganizertree.v1+xml' }
+    });
+    try { return parseTransportList(response.body); }
+    catch (error) {
+      if (!(error instanceof AppError) || error.code !== 'TRANSPORT_RESPONSE_INVALID' ||
+          (error.details as { response_element_paths?: string[] } | undefined)?.response_element_paths?.length !== 0) throw error;
+      // Newer ADT servers may return an empty root for the legacy user query.
+      // Reuse a matching saved configuration without creating or modifying SAP settings.
+      const configurations = await this.reader.transportConfigurations();
+      const enabled = (value: unknown) => value === true || value === 'true' || value === 'X';
+      for (const entry of configurations.slice(0, 10)) {
+        const uri = adtUri(entry.link);
+        if (!uri.startsWith('/sap/bc/adt/cts/transportrequests/searchconfiguration/configurations/')) continue;
+        const config = await this.reader.getTransportConfiguration(uri);
+        if (config.User?.toUpperCase() !== this.connection.username.toUpperCase() ||
+            !enabled(config.WorkbenchRequests) || !enabled(config.Modifiable)) continue;
+        const configured = await this.reader.httpClient.request('/sap/bc/adt/cts/transportrequests', {
+          qs: { configUri: uri, targets: true },
+          headers: { Accept: 'application/vnd.sap.adt.transportorganizertree.v1+xml' }
+        });
+        return parseTransportList(configured.body);
+      }
+      throw new AppError('TRANSPORT_QUERY_CONFIG_REQUIRED',
+        'Legacy user query returned no categories and no suitable saved search configuration was found. Save an ADT Transport Organizer configuration for the configured user with WorkbenchRequests and Modifiable enabled, then retry. No configuration was changed.',
+        { configurations_checked: Math.min(configurations.length, 10) });
+    }
+  }
+  async createTransportRequest(object: string, pkg: string, description: string) {
+    const number = (await this.client.createTransport(programUri(object), description, pkg)).trim();
+    if (!/^[A-Z0-9]{3}K[0-9]{6}$/.test(number)) {
+      throw new AppError('TRANSPORT_RESPONSE_INVALID', 'SAP may have created a request but returned no valid transport number. Query existing requests before any retry.');
+    }
+    return number;
+  }
+  async verifyTransportRequest(number: string): Promise<CreatedTransport | undefined> {
+    const listed = await this.transports();
+    if (!listed.workbench.some(target => target.modifiable.some(request => request['tm:number'] === number || request.tasks.some(task => task['tm:number'] === number)))) {
+      const response = await this.reader.httpClient.request(`/sap/bc/adt/cts/transportrequests/${number}`, {
+        headers: { Accept: 'application/vnd.sap.adt.transportorganizer.v1+xml' }
+      });
+      if (response.body.trim()) {
+        const detail = parseTransportDetails(response.body);
+        // Only classify independently read details when SAP explicitly identifies a modifiable workbench request.
+        if (detail && detail['tm:number'] === number && ['D', 'modifiable'].includes(detail['tm:status']) &&
+            (detail as unknown as Record<string, string>)['tm:type'] === 'K' &&
+            detail['tm:owner']?.toUpperCase() === this.connection.username.toUpperCase()) {
+          listed.workbench.push({ 'tm:name': '', 'tm:desc': '', modifiable: [detail], released: [] });
+        }
+      }
+    }
+    for (const target of listed.workbench) {
+      for (const request of target.modifiable) {
+        if (request['tm:number'] !== number && !request.tasks.some(task => task['tm:number'] === number)) continue;
+        if (!/^[A-Z0-9]{3}K[0-9]{6}$/.test(request['tm:number'])) return undefined;
+        const tasks = request.tasks.filter(task => task['tm:owner']?.toUpperCase() === this.connection.username.toUpperCase());
+        if (tasks.some(task => !/^[A-Z0-9]{3}K[0-9]{6}$/.test(task['tm:number']))) return undefined;
+        return { request_number: request['tm:number'], owner: request['tm:owner'], status: request['tm:status'],
+          tasks: tasks.slice(0, 20).map(task => ({ task_number: task['tm:number'], owner: task['tm:owner'], status: task['tm:status'] })),
+          tasks_truncated: tasks.length > 20 };
+      }
+    }
+    return undefined;
+  }
   async close() {
     try { if (this.client.loggedin) await this.client.logout(); }
     finally { if (this.reader.loggedin) await this.reader.logout(); }

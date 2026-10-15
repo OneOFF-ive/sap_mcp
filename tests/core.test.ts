@@ -199,6 +199,86 @@ test('creation returns actionable read instructions without inventing a source U
   } finally { await f.cleanup(); }
 });
 
+test('transport creation is guarded, verified and replayed without creating twice', async () => {
+  const f = await fixture(); try {
+    let creates = 0; let verification = 0;
+    const b: Backend = f.backend;
+    b.createTransportRequest = async (uri, pkg, description) => {
+      assert.equal(uri, object); assert.equal(pkg, 'ZPACKAGE'); assert.equal(description, 'New development');
+      creates++; return 'DEVK900001';
+    };
+    b.verifyTransportRequest = async number => {
+      assert.equal(number, 'DEVK900001'); verification++;
+      return { request_number: number, owner: 'TEST', status: 'modifiable',
+        tasks: [{ task_number: 'DEVK900002', owner: 'TEST', status: 'modifiable' }], tasks_truncated: false };
+    };
+    const args = { connection_id: f.connection.connection_id, object_uri: object, package_name: 'ZPACKAGE',
+      description: 'New development', request_id: 'new-transport' };
+    const result = await f.operations.run('create_transport_request', args);
+    assert.equal(result.status, 'success'); assert.equal(result.outcome, 'confirmed');
+    assert.equal((result.data as any).request_number, 'DEVK900001');
+    assert.equal((result.data as any).tasks[0].task_number, 'DEVK900002');
+    assert.equal((result.data as any).released, false); assert.equal(f.backend.saves, 0);
+    assert.deepEqual(await f.operations.run('create_transport_request', args), result);
+    assert.equal(creates, 1); assert.equal(verification, 1);
+    await assert.rejects(f.operations.run('create_transport_request', { ...args, description: 'Changed' }), /already used/);
+    const config = await f.store.load(); config.connections[0].write_enabled = false; await f.store.save(config);
+    const disabled = await f.operations.run('create_transport_request', { ...args, request_id: 'disabled-transport' });
+    assert.equal(disabled.error?.code, 'WRITE_DISABLED'); assert.equal(creates, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('transport readback failures retain the created number and never auto-recreate', async () => {
+  for (const failure of ['not-found', 'read-error', 'unknown-create']) {
+    const f = await fixture(); try {
+      let creates = 0;
+      const b: Backend = f.backend;
+      b.createTransportRequest = async () => {
+        creates++;
+        if (failure === 'unknown-create') throw new AppError('OUTCOME_UNKNOWN', 'Connection interrupted');
+        return 'DEVK900001';
+      };
+      b.verifyTransportRequest = async () => {
+        if (failure === 'read-error') throw new Error('Readback failed');
+        return undefined;
+      };
+      const args = { connection_id: f.connection.connection_id, object_uri: object, package_name: 'ZPACKAGE',
+        description: 'Test', request_id: 'uncertain-transport' };
+      const result = await f.operations.run('create_transport_request', args);
+      assert.equal(result.status, 'error');
+      assert.equal(result.outcome, failure === 'unknown-create' ? 'unknown' : 'partial');
+      if (failure !== 'unknown-create') {
+        assert.equal(result.error?.code, 'TRANSPORT_VERIFY_FAILED');
+        assert.equal((result.error?.details as any).transport_number, 'DEVK900001');
+        assert.equal((result.error?.details as any).created, true);
+      }
+      await f.operations.run('create_transport_request', args);
+      assert.equal(creates, 1); assert.equal(f.backend.saves, 0);
+    } finally { await f.cleanup(); }
+  }
+});
+
+test('local packages, ambiguous CTS checks and unavailable audit logs cannot create transports', async () => {
+  const f = await fixture(); try {
+    let creates = 0; const b: Backend = f.backend;
+    b.createTransportRequest = async () => { creates++; return 'DEVK900001'; };
+    b.verifyTransportRequest = async () => undefined;
+    const args = { connection_id: f.connection.connection_id, object_uri: object, package_name: '$TMP', description: 'Test' };
+    assert.equal((await f.operations.run('create_transport_request', { ...args, request_id: 'tmp-transport' })).error?.code, 'TRANSPORT_NOT_REQUIRED');
+    f.backend.transportRequirement = async () => 'not_required';
+    assert.equal((await f.operations.run('create_transport_request', { ...args, package_name: 'TEST_LOCAL', request_id: 'local-transport' })).error?.code, 'TRANSPORT_NOT_REQUIRED');
+    f.backend.transportRequirement = async () => { throw new AppError('TRANSPORT_CHECK_UNAVAILABLE', 'Unknown CTS state'); };
+    assert.equal((await f.operations.run('create_transport_request', { ...args, package_name: 'ZPACKAGE', request_id: 'unknown-transport' })).write_dispatched, false);
+    f.backend.transportRequirement = async () => 'required';
+    const badLog = join(f.directory, 'blocked-log'); await writeFile(badLog, 'not a directory');
+    const ops = new Operations(f.store, credentials, new AuditLog(badLog), () => b);
+    try {
+      assert.equal((await ops.run('create_transport_request', { ...args, package_name: 'ZPACKAGE', request_id: 'log-transport' })).error?.code, 'LOG_UNAVAILABLE');
+    } finally { await ops.close(); }
+    assert.equal(creates, 0);
+  } finally { await f.cleanup(); }
+});
+
 test('SAP stripping the final newline succeeds and returns the actual saved revision', async () => {
   const f = await fixture(); try {
     f.backend.save = async (_uri, code) => { f.backend.saves++; f.backend.inactive = code.replace(/[\r\n]+$/, ''); };
@@ -606,7 +686,10 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal((await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token.token}`, Origin: 'http://evil.test' } })).status, 403);
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token.token}` } } }));
     const listedTools = (await client.listTools()).tools;
-    assert.equal(listedTools.length, 14);
+    assert.equal(listedTools.length, 15);
+    const createTransport = listedTools.find(t => t.name === 'create_transport_request')!;
+    assert.equal(createTransport.annotations?.readOnlyHint, false);
+    assert.ok(createTransport.inputSchema.required?.includes('request_id'));
     for (const name of ['create_program', 'create_function_group', 'create_function_module', 'update_source']) {
       const tool = listedTools.find(t => t.name === name)!;
       assert.ok(tool.description?.includes('required on each call when SAP requires change recording'), name);
