@@ -209,6 +209,39 @@ test('ADT adapter does not follow redirects or leak credentials to redirect targ
     await new Promise<void>(resolve => target.close(() => resolve())); }
 });
 
+test('CTS preflight distinguishes explicit no-recording from missing or failed checks', async () => {
+  let flags = '<RESULT>S</RESULT><KORRFLAG/><RECORDING/>';
+  const calls: { body: string; state: string | string[] | undefined }[] = [];
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url!, 'http://local');
+    res.setHeader('Content-Type', 'application/xml');
+    if (url.pathname.endsWith('/compatibility/graph')) { res.setHeader('x-csrf-token', 'test'); res.end('<graph/>'); }
+    else if (url.pathname.endsWith('/cts/transportchecks')) {
+      let body = ''; for await (const chunk of req) body += chunk;
+      calls.push({ body, state: req.headers['x-sap-adt-sessiontype'] });
+      res.end(`<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA>${flags}</DATA></asx:values></asx:abap>`);
+    } else res.end('');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const backend = new AdtBackend(connectionSchema.parse({ connection_id: randomUUID(), name: 'mock',
+    base_url: `http://127.0.0.1:${address.port}`, client: '001', language: 'EN', username: 'TEST' }), 'fake');
+  const uri = '/sap/bc/adt/programs/programs/ztest';
+  try {
+    assert.equal(await backend.transportRequirement(uri, 'TEST_LOCAL', 'U'), 'not_required');
+    const input = new XMLParser().parse(calls[0].body)['asx:abap']['asx:values'].DATA;
+    assert.equal(input.URI, uri); assert.equal(input.DEVCLASS, 'TEST_LOCAL'); assert.equal(input.OPERATION, 'I');
+    assert.equal(calls[0].state, 'stateless');
+    flags = '<RESULT>S</RESULT><KORRFLAG>X</KORRFLAG><RECORDING>X</RECORDING>';
+    assert.equal(await backend.transportRequirement(uri, 'ZPACKAGE', 'I'), 'required');
+    for (const response of ['<RESULT>S</RESULT>', '<RESULT>E</RESULT><KORRFLAG/><RECORDING/>',
+      '<RESULT>S</RESULT><KORRFLAG>X</KORRFLAG><RECORDING/>']) {
+      flags = response;
+      await assert.rejects(backend.transportRequirement(uri, 'ZPACKAGE', 'U'), error => safeError(error).code === 'TRANSPORT_CHECK_UNAVAILABLE');
+    }
+  } finally { await backend.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test('SAP authentication failures are classified without exposing response data', async () => {
   const server = createServer((_req, res) => { res.statusCode = 401; res.end('secret backend detail'); });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

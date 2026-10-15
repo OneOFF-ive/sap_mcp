@@ -100,6 +100,7 @@ export interface Backend {
   listPackage(name: string, limit: number): Promise<unknown>;
   read(object: string, version: Version, source?: string): Promise<Source>;
   packageOf(object: string): Promise<string>;
+  transportRequirement?(object: string, pkg: string, operation: 'I' | 'U'): Promise<'required' | 'not_required'>;
   lock(object: string): Promise<string>;
   unlock(object: string, handle: string): Promise<void>;
   save(source: string, code: string, handle: string, transport?: string): Promise<void>;
@@ -152,6 +153,7 @@ export class AdtBackend implements Backend {
       source_lock_policy: { function_module: 'module', function_group_include: 'parent_group' },
       source_read_policy: 'separate_stateless_session',
       source_verification_policy: 'conservative_function_definition_tokens_v1',
+      transport_policy: 'sap_cts_preflight_when_task_omitted',
       limitations: ['Programs, Includes, function groups and function modules are supported subject to SAP permissions', 'Function module signature editing requires backend support for source-based declarations; no structured parameter tool is provided', 'Source revision checks use hashes under SAP object locks'] };
   }
   async search(query: string, type: string | undefined, limit: number) {
@@ -199,6 +201,13 @@ export class AdtBackend implements Backend {
     const uri = programUri(object);
     // Function module source saving requires the module's own ADT lock handle.
     return uri.startsWith('/sap/bc/adt/functions/groups/') && !uri.includes('/fmodules/') ? functionGroupUri(uri) : uri;
+  }
+  async transportRequirement(object: string, pkg: string, _operation: 'I' | 'U') {
+    // CTS operation I inserts an object into change recording, for both create and edit.
+    const info = await this.reader.transportInfo(programUri(object), pkg, 'I');
+    if (info.RESULT === 'S' && info.RECORDING === 'X') return 'required' as const;
+    if (info.RESULT === 'S' && info.RECORDING === '' && info.KORRFLAG === '') return 'not_required' as const;
+    throw new AppError('TRANSPORT_CHECK_UNAVAILABLE', 'SAP returned an ambiguous transport requirement; provide an explicit task or verify CTS settings.');
   }
   async lock(object: string) { return (await this.client.lock(this.lockUri(object))).LOCK_HANDLE; }
   async unlock(object: string, handle: string) { await this.client.unLock(this.lockUri(object), handle); }

@@ -150,8 +150,19 @@ export class Operations {
         ...(ctx.warnings.length ? { warnings: ctx.warnings } : {}) };
     }
   }
-  private requireTransport(pkg: string, transport?: string) {
-    if (pkg.toUpperCase() !== '$TMP' && !transport) throw new AppError('TRANSPORT_REQUIRED', 'A transport task is required for this package');
+  private async requireTransport(b: Backend, object: string, pkg: string, operation: 'I' | 'U', transport?: string) {
+    if (transport || pkg.toUpperCase() === '$TMP') return;
+    const details = { object_uri: object, package_name: pkg, operation,
+      guidance: 'Use list_transport_requests to select a modifiable task for the configured SAP user, or ask the user. No write has been dispatched; retry with a new request_id after review.' };
+    if (!b.transportRequirement) throw new AppError('TRANSPORT_CHECK_UNAVAILABLE', 'Cannot determine whether SAP requires a transport task; provide an explicit task or verify CTS settings.', details);
+    let requirement;
+    try { requirement = await b.transportRequirement(object, pkg, operation); }
+    catch (error) {
+      throw new AppError('TRANSPORT_CHECK_UNAVAILABLE', 'SAP transport check failed; no write was sent. Provide an explicit task or verify CTS settings.', { ...details, cause: safeError(error) });
+    }
+    if (requirement === 'not_required') return;
+    if (requirement === 'required') throw new AppError('TRANSPORT_REQUIRED', 'SAP requires a transport task for this operation; pass transport_task explicitly on this call.', details);
+    throw new AppError('TRANSPORT_CHECK_UNAVAILABLE', 'SAP transport requirement is unknown; no write was sent.', details);
   }
   private async locked<T>(b: Backend, object: string, ctx: Context, action: (handle: string) => Promise<T>): Promise<T> {
     let handle: string;
@@ -188,7 +199,7 @@ export class Operations {
       }
       case 'create_function_group': {
         if (!b.createFunctionGroup) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function group creation unavailable');
-        this.requireTransport(p.package_name!, p.transport_task);
+        await this.requireTransport(b, `/sap/bc/adt/functions/groups/${encodeURIComponent(p.name!.toLowerCase())}`, p.package_name!, 'I', p.transport_task);
         await ctx.event('started'); ctx.dispatched = true;
         const uri = await b.createFunctionGroup(p.name!, p.description!, p.package_name!, p.transport_task);
         ctx.confirmed = true; await ctx.event('created');
@@ -199,7 +210,7 @@ export class Operations {
         if (!b.createFunctionModule) throw new AppError('CAPABILITY_UNSUPPORTED', 'Function module creation unavailable');
         const group = functionGroupUri(p.function_group_uri!);
         if (group !== p.function_group_uri) throw new AppError('INVALID_URI', 'Specify the parent function group itself');
-        this.requireTransport(await b.packageOf(group), p.transport_task);
+        await this.requireTransport(b, `${group}/fmodules/${encodeURIComponent(p.name!.toLowerCase())}`, await b.packageOf(group), 'I', p.transport_task);
         await ctx.event('started');
         return this.locked(b, group, ctx, async () => {
           ctx.dispatched = true;
@@ -211,7 +222,7 @@ export class Operations {
         });
       }
       case 'create_program': {
-        this.requireTransport(p.package_name!, p.transport_task);
+        await this.requireTransport(b, `/sap/bc/adt/programs/${p.program_kind === 'include' ? 'includes' : 'programs'}/${encodeURIComponent(p.name!.toLowerCase())}`, p.package_name!, 'I', p.transport_task);
         await ctx.event('started');
         ctx.dispatched = true;
         const uri = await b.create(p.name!, p.description!, p.package_name!, p.transport_task, p.program_kind ?? 'report');
@@ -228,7 +239,7 @@ export class Operations {
         const saveState: SourceSaveState = { saved: false, verification: 'not_run', object_uri: object, ...(p.source_uri ? { source_uri: p.source_uri } : {}) };
         ctx.source_save = saveState;
         if (isFunctionGroup(object)) throw new AppError('CAPABILITY_UNSUPPORTED', 'Edit a function module or group Include, not the function group container');
-        this.requireTransport(await b.packageOf(object), p.transport_task);
+        await this.requireTransport(b, object, await b.packageOf(object), 'U', p.transport_task);
         await ctx.event('started');
         return this.locked(b, object, ctx, async handle => {
           ctx.steps.push('locked');

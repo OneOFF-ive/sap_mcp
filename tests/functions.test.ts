@@ -189,6 +189,7 @@ test('function tools enforce transport and write controls, and group activation 
   const ops = new Operations(store, { get: async () => 'fake', set: async () => {}, remove: async () => {} }, new AuditLog(join(directory, 'logs')), () => backend);
   const base = { connection_id: connection.connection_id, name: 'ZGROUP', description: 'Test' };
   try {
+    backend.transportRequirement = async () => 'required';
     const missingTask = await ops.run('create_function_group', { ...base, package_name: 'ZPACKAGE', request_id: 'no-task' });
     assert.equal(missingTask.error?.code, 'TRANSPORT_REQUIRED'); assert.equal(created, 0);
     assert.equal((await ops.run('create_function_group', { ...base, package_name: '$TMP', request_id: 'group' })).status, 'success');

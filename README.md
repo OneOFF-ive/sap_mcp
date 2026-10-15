@@ -98,7 +98,7 @@ npm start -- token revoke <令牌ID>
 2. 搜索对象，使用返回的相对 `object_uri` 读取 active 或 inactive 主源码。
 3. 在本地连接配置中明确启用写入。连接不限定包，实际读写权限由 SAP 用户权限决定。
 4. 创建程序壳，或读取目标源码的 `revision` 后修改。
-5. 修改时提交 `source_uri`、源码、`expected_revision` 和唯一 `request_id`。非 `$TMP` 包还需要传输任务。
+5. 修改时提交 `source_uri`、源码、`expected_revision` 和唯一 `request_id`。是否需要传输任务由 SAP CTS 检查决定。
 6. 检查 inactive 源码。激活时提交对象 URI 和 inactive revision，再读回 active 确认。
 
 激活前在编辑锁内校验版本，然后释放编辑锁、再次校验版本，再交由 SAP 激活接口获取所需锁；持有编辑锁会阻挡部分系统的激活。释放锁到发出请求之间仍有短暂并发窗口，激活后读回校验用于发现结果差异，不承诺远程原子性。
@@ -113,7 +113,7 @@ npm start -- token revoke <令牌ID>
 }
 ```
 
-创建名称仅允许 Z/Y 开头的大写程序名，长度不超过 30。创建时指定目标包，不需要在连接配置中预先登记。连接不限定包；服务端通过 `write_enabled` 控制写操作，具体对象的访问和修改权限由 SAP 用户权限决定，非 `$TMP` 包写入仍需提供传输任务。已有 inactive 草稿时，不能从 active revision 直接覆盖，应先读取 inactive。源码版本使用连接、URI、版本与内容哈希生成，并在 SAP 对象锁内重新核对。
+创建名称仅允许 Z/Y 开头的大写程序名，长度不超过 30。创建时指定目标包，不需要在连接配置中预先登记。连接不限定包；服务端通过 `write_enabled` 控制写操作，具体对象的访问和修改权限由 SAP 用户权限决定，SAP 要求记录变更时需提供传输任务。已有 inactive 草稿时，不能从 active revision 直接覆盖，应先读取 inactive。源码版本使用连接、URI、版本与内容哈希生成，并在 SAP 对象锁内重新核对。
 
 修改支持 `/sap/bc/adt/programs/programs/<名称>/source/main` 与 `/sap/bc/adt/programs/includes/<名称>/source/main`，包括已有模块池等非 REPORT Program。服务检查对象元数据类型与路径一致，并遵循 SAP 权限、锁和传输任务要求。Include 语法或激活依赖主程序上下文时，以 SAP 后端诊断为准；服务不自动激活未指定的父程序。
 
@@ -145,7 +145,7 @@ npm start -- token revoke <令牌ID>
 | `list_function_group_members` | 列出组内函数模块和 Include（FUGR/I），默认最多 100，最大 500 |
 | `get_function_group` | 读取成员源码版本并生成组快照 revision，用于整体激活 |
 
-函数组名称创建时要求 Z/Y 开头、大写且不超过 26 字符；函数模块名称不超过 30 字符。函数模块继承函数组的包，非 $TMP 组需提交 transport_task。创建组后使用返回的 URI 指定父组，不按同名 Program 推断。
+函数组名称创建时要求 Z/Y 开头、大写且不超过 26 字符；函数模块名称不超过 30 字符。函数模块继承函数组的包，SAP 要求记录变更时需提交 transport_task。创建组后使用返回的 URI 指定父组，不按同名 Program 推断。
 
 函数模块及组内 Include 复用 `read_source`、`update_source`、`syntax_check` 和 `activate_objects`。函数模块修改使用模块自身的 ADT 锁，组内 Include 当前使用父组锁。成员 URI 示例：
 
@@ -159,6 +159,8 @@ npm start -- token revoke <令牌ID>
 当前没有结构化的函数参数维护工具。但在支持源码式接口声明的 SAP 系统中，read_source 返回的 FUNCTION 定义区可以包含参数，通过 update_source 保存、检查和激活可更新接口。可选 IMPORTING 整型参数和 TABLES 的 BAPIRET2 参数已完成保存、检查、激活与恢复验证；其他接口特性需要分别验证。不要把旧式 Local Interface 注释等同于可编辑声明。本服务不执行函数模块，也不自动生成 RFC/BAPI 属性。
 
 `list_connections` 返回连接名称、`connection_id`、`base_url`、`client`、`language`、`username` 和 `write_enabled`，不返回密码或令牌。写入前应确认目标系统和 Client，不能仅凭连接名称判断。
+
+是否需要 `transport_task` 由 SAP 的变更记录要求决定，不能仅看包名。`$TMP` 可省略；其他包在省略任务时，会先调用只读 ADT CTS 检查：成功且明确无需记录变更时允许继续，明确需要时返回 `TRANSPORT_REQUIRED`，失败、字段缺失或结果不明确时返回 `TRANSPORT_CHECK_UNAVAILABLE`，均不会试写。已显式提供任务时直接交由 SAP 校验。服务不自动选择、记忆或继承任务；需要记录时每次创建和 `update_source` 都应显式提交。先用 `list_transport_requests` 查询任务，有歧义时询问用户，不把父请求号直接当成任务号。
 
 创建程序或函数模块后，按返回的 `data.next_action.tool` 和 `data.next_action.arguments` 调用 `read_source`，获取 SAP 元数据中发现的真实 `source_uri` 和 revision，不要自行拼接源码路径。初始读取请求为 inactive；如果该版本不存在，应明确读取 active，不假定两个版本相同。函数组容器没有主源码，创建后指引调用 `get_function_group` 获取组快照。
 

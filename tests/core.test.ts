@@ -45,6 +45,7 @@ class FakeBackend implements Backend {
     return sourceResult(this.connection, uri, `${uri}/source/main`, code, version);
   }
   async packageOf() { return '$TMP'; }
+  async transportRequirement(): Promise<'required' | 'not_required'> { return 'required'; }
   async lock() { this.locks++; return 'private-lock-handle'; }
   async unlock() { this.unlocks++; if (this.failUnlock) throw new Error('Unlock failed'); }
   async save(_uri: string, code: string) { this.saves++; this.inactive = code;
@@ -327,7 +328,36 @@ test('stale revision and existing inactive draft do not overwrite code', async (
     assert.equal(result.error?.code, 'VERSION_CONFLICT'); assert.equal(f.backend.saves, 0); assert.equal(f.backend.unlocks, 1);
   } finally { await f.cleanup(); }
 });
-test('disabled writes fail before locks; nonlocal packages require transport tasks', async () => {
+test('SAP checks allow other local packages and stop required or unknown transport writes', async () => {
+  const f = await fixture(); try {
+    f.backend.packageOf = async () => 'TEST_LOCAL';
+    const checks: string[] = [];
+    f.backend.transportRequirement = async () => { checks.push('check'); return 'not_required'; };
+    const created = await f.operations.run('create_program', { connection_id: f.connection.connection_id,
+      name: 'ZTEST', description: 'Local', package_name: 'TEST_LOCAL', request_id: 'local-create' });
+    assert.equal(created.status, 'success');
+    const revision = (await f.backend.read(object, 'inactive')).revision;
+    const args = { connection_id: f.connection.connection_id, object_uri: object,
+      source: 'REPORT ztest. WRITE 1.', expected_revision: revision };
+    const saved = await f.operations.run('update_source', { ...args, request_id: 'local-update' });
+    assert.equal(saved.status, 'success'); assert.equal(checks.length, 2);
+    const saves = f.backend.saves; const locks = f.backend.locks;
+    f.backend.transportRequirement = async () => 'required';
+    const required = await f.operations.run('update_source', { ...args, request_id: 'required-update' });
+    assert.equal(required.error?.code, 'TRANSPORT_REQUIRED');
+    f.backend.transportRequirement = async () => { throw new Error('Check failed'); };
+    const unknown = await f.operations.run('update_source', { ...args, request_id: 'unknown-update' });
+    assert.equal(unknown.error?.code, 'TRANSPORT_CHECK_UNAVAILABLE');
+    assert.equal(f.backend.saves, saves); assert.equal(f.backend.locks, locks);
+    assert.equal(unknown.write_dispatched, false);
+    const explicit = await f.operations.run('update_source', { ...args,
+      expected_revision: (await f.backend.read(object, 'inactive')).revision,
+      transport_task: 'DEVK900001', request_id: 'explicit-update' });
+    assert.equal(explicit.status, 'success');
+  } finally { await f.cleanup(); }
+});
+
+test('disabled writes fail before locks; SAP-recorded packages require transport tasks', async () => {
   const f = await fixture(); try {
     const config = await f.store.load(); config.connections[0].write_enabled = false; await f.store.save(config);
     let result = await f.operations.run('create_program', { connection_id: f.connection.connection_id, name: 'ZTEST',
@@ -575,7 +605,15 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal((await fetch(url, { method: 'POST' })).status, 401);
     assert.equal((await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token.token}`, Origin: 'http://evil.test' } })).status, 403);
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token.token}` } } }));
-    assert.equal((await client.listTools()).tools.length, 14);
+    const listedTools = (await client.listTools()).tools;
+    assert.equal(listedTools.length, 14);
+    for (const name of ['create_program', 'create_function_group', 'create_function_module', 'update_source']) {
+      const tool = listedTools.find(t => t.name === name)!;
+      assert.ok(tool.description?.includes('required on each call when SAP requires change recording'), name);
+      assert.ok(tool.description?.includes('NOT remembered or inherited'), name);
+      const field = tool.inputSchema.properties?.transport_task as { description?: string };
+      assert.ok(field.description?.includes('when SAP requires change recording'), name);
+    }
     const result = await client.callTool({ name: 'read_source', arguments: { connection_id: f.connection.connection_id, object_uri: object } });
     assert.equal(result.isError, false); assert.equal((result.structuredContent as { data: { source: string } }).data.source, 'REPORT ztest.');
     const invalid = await client.callTool({ name: 'read_source', arguments: { connection_id: f.connection.connection_id, object_uri: 'http://evil.test' } });

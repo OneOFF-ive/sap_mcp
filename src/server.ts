@@ -13,7 +13,8 @@ const uri = z.string().min(1).max(2048);
 const version = z.enum(['active', 'inactive']);
 const limit = z.number().int().min(1).max(500).default(100);
 const pkg = z.string().regex(/^[A-Za-z0-9_$/]+$/).max(128);
-const transport = z.string().regex(/^[A-Za-z0-9]+$/).max(30).optional();
+const transport = z.string().regex(/^[A-Za-z0-9]+$/).max(30).optional()
+  .describe('Required on each create or update_source call when SAP requires change recording, not merely because a package is not $TMP. If omitted, the service queries SAP; confirmed local/no-recording packages need no task. Unknown requirements block writing. Tasks are not remembered or inherited. Use list_transport_requests or ask the user; never invent a task ID.');
 const requestId = z.string().min(1).max(128);
 const schemas = {
   list_connections: z.object({}).strict(),
@@ -52,7 +53,7 @@ const descriptions: Record<keyof typeof schemas, string> = {
   update_source: 'Save Program, Include, function module or group Include main source with expected revision. Does not activate. Inspect source_save even on errors: saved=true means SAP accepted the save, not that content verification passed; unknown requires reading backend state. Read inactive before retrying VERIFY_FAILED, and do not use its revision to blindly overwrite. Function modules use their own lock and ADT source-based declarations: TABLES T_RETURN TYPE BAPIRET2 OPTIONAL, not legacy STRUCTURE or Local Interface comments. EXCEPTIONS lists names only, e.g. INVALID_INPUT., never INVALID_INPUT = 1 (that is CALL FUNCTION syntax). End the definition with a period. Definition comments may be lost; implementation comments must not start with reserved prefixes *" or *"---. SAP may normalize the definition.',
   syntax_check: 'Check the requested version and return backend diagnostics.',
   activate_objects: 'Activate selected source objects with inactive revisions, or a function group with the revision from get_function_group. Group activation affects its members. May partially succeed.',
-  list_transport_requests: 'List the configured SAP user transport requests and tasks.'
+  list_transport_requests: 'List the configured SAP user transport requests and tasks. Use this to find an existing modifiable task when SAP requires change recording; package names alone do not establish that requirement. Confirm the intended task with the user if ambiguous. Does not create or release requests or select a default task.'
 };
 export function makeMcp(operations: Operations) {
   const server = new McpServer({ name: 'sap-mcp', version: '0.1.0' });
@@ -63,7 +64,9 @@ export function makeMcp(operations: Operations) {
       : descriptions[name];
     const guidance = name === 'create_function_module' || name === 'update_source' ? ' ' + functionModuleSyntaxHelp
       : name === 'read_source' ? ' If inactive returns VERSION_UNAVAILABLE, follow error.details.next_action to explicitly read active and obtain its revision. This is not proof of activation; no silent version fallback occurs.' : '';
-    server.registerTool(name, { description: description + guidance, inputSchema: schemas[name],
+    const transportGuidance = ['create_program', 'create_function_group', 'create_function_module', 'update_source'].includes(name)
+      ? ' transport_task is required on each call when SAP requires change recording, including update_source of existing objects. A task supplied earlier is NOT remembered or inherited. If omitted outside $TMP, the service performs a read-only SAP CTS check before locking or writing: required returns TRANSPORT_REQUIRED; confirmed no-recording permits omission; failed or ambiguous checks return TRANSPORT_CHECK_UNAVAILABLE without writing. Package names alone do not determine transportability. Use list_transport_requests or ask the user for a modifiable task; never guess a task or confuse it with its parent request. SAP makes final task/ownership validation.' : '';
+    server.registerTool(name, { description: description + guidance + transportGuidance, inputSchema: schemas[name],
       annotations: { readOnlyHint: !write, destructiveHint: write, idempotentHint: !write, openWorldHint: true }
     }, async (args: Input) => {
       try {
