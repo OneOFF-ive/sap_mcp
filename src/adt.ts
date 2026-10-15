@@ -8,6 +8,7 @@ import { AppError, safeError } from './errors.js';
 import { functionDefinition } from './function-signature.js';
 import { parseTransportList, parseTransportDetails } from './transports.js';
 import { groupActivationBody, activationResponse } from './activation.js';
+import { tableQuery, readOnlySql, queryResult, queryCapabilities, type TableQuery, type SqlQuery } from './data-query.js';
 
 export type Version = 'active' | 'inactive';
 export type ProgramKind = 'report' | 'include' | 'module_pool' | 'subroutine_pool';
@@ -98,6 +99,8 @@ export function sourceResult(connectionId: string, object: string, uri: string, 
     revision: digest(JSON.stringify([connectionId, uri, version, hash])) };
 }
 export interface Backend {
+  queryTable?(input: TableQuery): Promise<unknown>;
+  querySql?(input: SqlQuery): Promise<unknown>;
   capabilities(): Promise<unknown>;
   search(query: string, type: string | undefined, limit: number): Promise<unknown>;
   listPackage(name: string, limit: number): Promise<unknown>;
@@ -154,7 +157,7 @@ export class AdtBackend implements Backend {
   async capabilities() {
     const discovery = await this.client.adtDiscovery();
     if (!discovery.length) throw new AppError('ADT_UNAVAILABLE', 'Backend did not return a usable ADT discovery document');
-    return { discovery, probed_at: new Date().toISOString(),
+    return { discovery, data_query: queryCapabilities(discovery), probed_at: new Date().toISOString(),
       source_lock_policy: { function_module: 'module', function_group_include: 'parent_group' },
       source_read_policy: 'separate_stateless_session',
       source_verification_policy: 'conservative_function_definition_tokens_v1',
@@ -172,6 +175,25 @@ export class AdtBackend implements Backend {
     return { objects: matches.slice(0, limit).map(r => ({ name: r['adtcore:name'], type: r['adtcore:type'],
       package_name: r['adtcore:packageName'], object_uri: adtUri(r['adtcore:uri']), description: r['adtcore:description'] })),
       truncated: matches.length > limit || rows.length >= fetchLimit };
+  }
+  private async dataQuery(run: () => Promise<{ columns: unknown[]; values: unknown[] }>, limit: number) {
+    try { return queryResult(await run(), limit); }
+    catch (error) {
+      const failure = safeError(error);
+      const status = (failure.details as { http_status?: number } | undefined)?.http_status;
+      if (status && [404, 405, 501].includes(status)) {
+        throw new AppError('CAPABILITY_UNSUPPORTED', 'SAP data preview endpoint is unavailable on this system', { http_status: status });
+      }
+      throw error;
+    }
+  }
+  async queryTable(input: TableQuery) {
+    const p = tableQuery(input);
+    return this.dataQuery(() => this.reader.tableContents(p.table_name, p.limit + 1, false, p.sql), p.limit);
+  }
+  async querySql(input: SqlQuery) {
+    const p = readOnlySql(input);
+    return this.dataQuery(() => this.reader.runQuery(p.sql, p.limit + 1, false), p.limit);
   }
   async listPackage(name: string, limit: number) {
     const result = await this.client.nodeContents('DEVC/K', name);

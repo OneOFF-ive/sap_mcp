@@ -12,6 +12,7 @@
 - 本地 Web 管理界面、双击启动脚本、连接与令牌管理、MCP 服务启停。
 - HTTP MCP 服务及本地访问令牌认证。
 - 搜索对象、浏览包、读取源码。
+- 通过独立 DDIC 和 freestyle Data Preview 接口查询表数据及执行只读 ABAP SQL。
 - 创建 REPORT、Include、模块池和子程序池；修改与激活 Program（PROG/P）和 Include（PROG/I）的主源码，提供语法检查。
 - 创建函数组与空函数模块，浏览成员，修改及检查函数模块和组内 Include；通过组快照校验整体激活。
 - 对象锁、版本冲突、传输请求和部分失败处理。
@@ -118,6 +119,8 @@ Web 管理端口独立于 MCP，默认监听 127.0.0.1:8766。启动生成随机
 | `list_connections` | 无 | ID、名称、write_enabled，不探测实时登录状态 |
 | `get_capabilities` | `connection_id` | discovery 支持的能力及探测时间 |
 | `search_objects` | 连接、`query`、可选类型、`limit` | 名称、类型、包、对象 URI、是否截断 |
+| `query_table` | 连接、表名、可选字段和 AND 筛选、`limit` | 列元数据、字符串行、返回行数、是否截断 |
+| `query_sql` | 连接、单条只读 SELECT、`limit` | 列元数据、字符串行、返回行数、是否截断 |
 | `list_package_objects` | 连接、`package_name`、`limit` | 后端节点字段、truncated、pagination_supported=false |
 | `read_source` | 连接、`object_uri`、可选 `source_uri`、`version` | 源码、源码 URI、实际版本、revision、哈希 |
 | `create_program` | 连接、`name`、`description`、`package_name`、`program_kind`（默认 report）、可选 `transport_task`、`request_id` | 对象 URI、program_kind、创建状态 |
