@@ -2,11 +2,13 @@ import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
+export const defaultLogDirectory = () => process.env.SAP_MCP_LOG_DIR ?? join(process.env.LOCALAPPDATA ?? homedir(), 'sap-mcp', 'logs');
+
 export class AuditLog {
   private queue: Promise<void> = Promise.resolve();
   private day = '';
   private part = 0;
-  constructor(private directory = process.env.SAP_MCP_LOG_DIR ?? join(process.env.LOCALAPPDATA ?? homedir(), 'sap-mcp', 'logs')) {}
+  constructor(private directory = defaultLogDirectory()) {}
   append(event: Record<string, unknown>): Promise<void> {
     const next = this.queue.then(async () => {
       await mkdir(this.directory, { recursive: true });

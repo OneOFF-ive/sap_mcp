@@ -68,6 +68,7 @@ type Context = {
 };
 
 export type BackendFactory = (c: Connection, password: string) => Backend;
+export type CacheClearResult = { cleared_sessions: number; retained_write_requests: number };
 
 const recoverableSessionErrors = new Set(['AUTH_FAILED', 'CSRF_FAILED', 'HTTP_FORBIDDEN', 'ADT_ERROR', 'OUTCOME_UNKNOWN']);
 
@@ -101,12 +102,14 @@ export class Operations {
   private pending = 0;
   private poisoned = new Set<Backend>();
   private closing = false;
+  private maintenance: Promise<CacheClearResult> | undefined;
 
   constructor(private store: ConfigStore, private credentials: Credentials, private audit = new AuditLog(), private factory: BackendFactory = (c, p) => new AdtBackend(c, p), private cacheEntryLimit = 512) { }
 
   async run(tool: string, input: Input): Promise<Result> {
     if (this.closing)
       throw new AppError('SERVER_STOPPING', 'Server is stopping');
+    if (this.maintenance) throw new AppError('BUSY', '正在清理连接缓存，请稍后重试。');
     if (this.pending >= 100)
       throw new AppError('BUSY', 'Too many pending operations');
     if (writeTools.has(tool)) {
@@ -737,8 +740,29 @@ export class Operations {
     }
   }
 
+  async clearCache(): Promise<CacheClearResult> {
+    if (this.closing) throw new AppError('SERVER_STOPPING', '服务正在停止，无法清理缓存。');
+    if (this.pending || this.maintenance) throw new AppError('BUSY', '当前有操作正在执行，请完成后再清理缓存。');
+    if (this.poisoned.size) throw new AppError('SESSION_NEEDS_REVIEW', '存在解锁状态异常的会话，请先核实 SAP 锁；不能通过清理缓存绕过保护。');
+    const clear = async () => {
+      let cleared = 0;
+      let failed = 0;
+      for (const [id, backend] of this.sessions) {
+        try { await backend.close(); this.sessions.delete(id); cleared++; }
+        catch { failed++; }
+      }
+      if (failed) throw new AppError('CACHE_CLEAR_FAILED', `已清理 ${cleared} 个连接缓存，${failed} 个会话未能确认关闭，请检查连接后重试。`);
+      // These records prevent duplicate SAP writes; cache cleanup must retain them.
+      return { cleared_sessions: cleared, retained_write_requests: this.requests.size };
+    };
+    this.maintenance = clear();
+    try { return await this.maintenance; }
+    finally { this.maintenance = undefined; }
+  }
+
   async close() {
     this.closing = true;
+    await this.maintenance?.catch(() => {});
     await Promise.allSettled([...this.queues.values()]);
     await Promise.allSettled([...this.sessions.values()].map(s => s.close()));
   }

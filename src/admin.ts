@@ -9,6 +9,7 @@ import { startHttp } from './server.js';
 import { acquireLease } from './lease.js';
 import { safeError, AppError } from './errors.js';
 import type { BackendFactory } from './operations.js';
+import { cleanupLogs } from './log-cleanup.js';
 
 const draft = connectionSchema.omit({ connection_id: true }).extend({
   write_enabled: z.boolean(),
@@ -23,7 +24,9 @@ function validationResponse(error: z.ZodError) {
     ? fields.map(field => field.message).join('\n')
     : error.issues.some(issue => issue.path[0] === 'port')
       ? '端口必须是 1～65535 之间的整数，例如 8765。'
-      : '请求参数格式不正确，或包含不支持的字段，请检查后重试。';
+      : error.issues.some(issue => issue.path[0] === 'older_than_days')
+        ? '日志保留天数必须是 0～36500 的整数；0 表示清理今天以前的日志。'
+        : '请求参数格式不正确，或包含不支持的字段，请检查后重试。';
   return { code: 'INVALID_INPUT', message, fields };
 }
 
@@ -254,6 +257,13 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
       }
     });
     res.json({ success: true });
+  });
+  app.post('/api/cache/clear', async (_req, res) => {
+    res.json(await exclusive(async () => runtime ? await runtime.clearCache() : { cleared_sessions: 0, retained_write_requests: 0 }));
+  });
+  app.post('/api/logs/clear', async (req, res) => {
+    const options = z.object({ older_than_days: z.number().int().min(0).max(36500), confirm: z.boolean().default(false) }).strict().parse(req.body);
+    res.json(await exclusive(() => cleanupLogs(options.older_than_days, options.confirm)));
   });
   app.post('/api/application/stop', (_req, res) => {
     res.json({ success: true });

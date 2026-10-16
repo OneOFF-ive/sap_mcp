@@ -16,6 +16,9 @@ SetCompressor /SOLID zlib
 !ifndef OUTPUT_FILE
   !error "OUTPUT_FILE is required"
 !endif
+!ifndef ICON_FILENAME
+  !define ICON_FILENAME "sapmcp.ico"
+!endif
 !ifdef TEST_MODE
   !define PRODUCT_KEY "Software\SAPMCPInstallerTest"
   !define UNINSTALL_KEY "Software\SAPMCPInstallerTest\Uninstall"
@@ -30,8 +33,8 @@ Name "SAP MCP ${APP_VERSION} (${TARGET_ARCH})"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\SAPMCP"
 InstallDirRegKey HKCU "${PRODUCT_KEY}" "InstallDir"
-Icon "${STAGE_DIR}\sapmcp.ico"
-UninstallIcon "${STAGE_DIR}\sapmcp.ico"
+!define MUI_ICON "${STAGE_DIR}\sapmcp.ico"
+!define MUI_UNICON "${STAGE_DIR}\sapmcp.ico"
 VIProductVersion "${APP_VERSION}.0"
 VIAddVersionKey "ProductName" "SAP MCP"
 VIAddVersionKey "FileDescription" "SAP MCP Windows Installer"
@@ -95,7 +98,8 @@ Section "SAP MCP 主程序（内置 Node.js，离线安装）" Core
   Pop $0
   Pop $1
   ${If} $0 != 0
-    MessageBox MB_ICONSTOP "无法安装到此目录。请关闭 SAP MCP 管理界面（托盘退出）及后台服务；不要覆盖其他文件夹。运行锁或门锁仍存在时请先核实进程状态。错误码：$0" /SD IDOK
+    DetailPrint "安装检查失败（错误码：$0）：$1"
+    MessageBox MB_ICONSTOP "暂时无法安装（错误码：$0）。$\r$\n$\r$\n$1" /SD IDOK
     SetErrorLevel 10
     Abort
   ${EndIf}
@@ -115,7 +119,7 @@ Section "SAP MCP 主程序（内置 Node.js，离线安装）" Core
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "SAP MCP"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\bin\sapmcp-gui.exe"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\${ICON_FILENAME}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
@@ -129,8 +133,8 @@ Section "SAP MCP 主程序（内置 Node.js，离线安装）" Core
     StrCpy $DesktopShortcut "$DESKTOP\SAP MCP.lnk"
   !endif
   CreateDirectory "$StartMenuDirectory"
-  CreateShortcut "$StartMenuDirectory\SAP MCP 管理界面.lnk" "$INSTDIR\bin\sapmcp-gui.exe"
-  CreateShortcut "$StartMenuDirectory\卸载 SAP MCP.lnk" "$INSTDIR\Uninstall.exe"
+  CreateShortcut "$StartMenuDirectory\SAP MCP 管理界面.lnk" "$INSTDIR\bin\sapmcp-gui.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
+  CreateShortcut "$StartMenuDirectory\卸载 SAP MCP.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
 SectionEnd
 
 Section "将 sapmcp 加入当前用户 PATH（重新打开终端生效）" UserPath
@@ -144,7 +148,16 @@ Section "将 sapmcp 加入当前用户 PATH（重新打开终端生效）" UserP
 SectionEnd
 
 Section "创建桌面快捷方式" DesktopIcon
-  CreateShortcut "$DesktopShortcut" "$INSTDIR\bin\sapmcp-gui.exe"
+  CreateShortcut "$DesktopShortcut" "$INSTDIR\bin\sapmcp-gui.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
+SectionEnd
+
+Section "-Refresh icons"
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-control.ps1" -Action RefreshIcons -InstallDirectory "$INSTDIR" -InstallerPath "$EXEPATH"'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    DetailPrint "程序已安装，但系统图标刷新未完成：$1"
+  ${EndIf}
 SectionEnd
 
 Section "Uninstall"
@@ -154,7 +167,8 @@ Section "Uninstall"
   Pop $0
   Pop $1
   ${If} $0 != 0
-    MessageBox MB_ICONSTOP "请先通过托盘退出图形管理界面，并正常停止后台 MCP 服务，再卸载。不会强制结束 SAP 操作。" /SD IDOK
+    DetailPrint "卸载检查失败（错误码：$0）：$1"
+    MessageBox MB_ICONSTOP "暂时无法卸载（错误码：$0）。$\r$\n$\r$\n$1" /SD IDOK
     SetErrorLevel 10
     Abort
   ${EndIf}

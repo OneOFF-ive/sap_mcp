@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ConfigStore, type Credentials } from '../src/config.js';
 import { startAdmin } from '../src/admin.js';
 import type { Backend } from '../src/adt.js';
@@ -10,6 +12,8 @@ import type { Backend } from '../src/adt.js';
 test('local web management protects APIs and manages connections, credentials, tokens and service lifecycle', async () => {
   const root = join(process.cwd(), '.sap-mcp', 'tests'); await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'admin-'));
+  const oldLogDirectory = process.env.SAP_MCP_LOG_DIR;
+  process.env.SAP_MCP_LOG_DIR = join(directory, 'logs');
   const store = new ConfigStore(directory); const passwords = new Map<string, string>();
   const credentials: Credentials = { get: async id => { const value = passwords.get(id); if (!value) throw new Error('Missing'); return value; },
     set: async (id, value) => { passwords.set(id, value); }, remove: async id => { passwords.delete(id); } };
@@ -28,6 +32,16 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.ok(home.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
     assert.equal((await fetch(`${origin}/icons.js`)).status, 200);
     assert.equal((await fetch(`${origin}/api/state`)).status, 401);
+    assert.equal((await fetch(`${origin}/api/cache/clear`, { method: 'POST', headers: { Origin: origin } })).status, 401);
+    assert.equal((await api('cache/clear', 'POST')).body.cleared_sessions, 0);
+    assert.equal((await fetch(`${origin}/api/logs/clear`, { method: 'POST', headers: { Origin: origin } })).status, 401);
+    await mkdir(join(directory, 'logs'));
+    const oldLog = join(directory, 'logs', 'operations-2000-01-01-0.jsonl');
+    await writeFile(oldLog, 'old log'); await utimes(oldLog, new Date('2000-01-01'), new Date('2000-01-01'));
+    assert.equal((await api('logs/clear', 'POST', { older_than_days: 30 })).body.eligible_files, 1);
+    assert.equal(await readFile(oldLog, 'utf8'), 'old log');
+    assert.equal((await api('logs/clear', 'POST', { older_than_days: 30, confirm: true })).body.deleted_files, 1);
+    await assert.rejects(readFile(oldLog), { code: 'ENOENT' });
     for (const path of ['/API/state', '/Api/state', '/aPi/tokens']) {
       assert.equal((await fetch(`${origin}${path}`)).status, 401, path);
     }
@@ -90,6 +104,18 @@ test('local web management protects APIs and manages connections, credentials, t
     const port = (probe.address() as { port: number }).port; await new Promise<void>(resolve => probe.close(() => resolve()));
     assert.equal((await api('service/start', 'POST', { port })).status, 200);
     assert.equal((await api('state')).body.running, true);
+    const client = new Client({ name: 'cache-admin-test', version: '1' });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+        requestInit: { headers: { Authorization: `Bearer ${token.body.token}` } }
+      }));
+      await client.callTool({ name: 'get_capabilities', arguments: { connection_id: id } });
+      const cleared = await api('cache/clear', 'POST');
+      assert.equal(cleared.status, 200);
+      assert.deepEqual(cleared.body, { cleared_sessions: 1, retained_write_requests: 0 });
+      assert.equal((await api('state')).body.running, true);
+      assert.equal((await client.callTool({ name: 'get_capabilities', arguments: { connection_id: id } })).isError, false);
+    } finally { await client.close(); }
     assert.equal((await api(`connections/${id}`, 'DELETE')).body.error.code, 'MCP_RUNNING');
     assert.equal((await api(`connections/${id}`, 'PUT', { ...draft, password: undefined })).body.error.code, 'MCP_RUNNING');
     assert.equal((await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST' })).status, 401);
@@ -99,5 +125,9 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.equal((await api('service/start', 'POST', { port })).body.error.code, 'TOKEN_REQUIRED');
     assert.equal((await api(`connections/${id}`, 'DELETE')).status, 200); assert.equal(passwords.size, 0);
     assert.equal((await api('application/stop', 'POST')).body.success, true);
-  } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await runtime.close(); await rm(directory, { recursive: true, force: true });
+    if (oldLogDirectory === undefined) delete process.env.SAP_MCP_LOG_DIR;
+    else process.env.SAP_MCP_LOG_DIR = oldLogDirectory;
+  }
 });

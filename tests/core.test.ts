@@ -72,6 +72,56 @@ async function fixture() {
     cleanup: async () => { await operations.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
+test('cache cleanup recreates sessions and retains write replay protection', async () => {
+  const f = await fixture();
+  let created = 0; let closed = 0;
+  const ops = new Operations(f.store, credentials, new AuditLog(f.logDirectory), () => {
+    created++; f.backend.close = async () => { closed++; }; return f.backend;
+  });
+  try {
+    const args = { connection_id: f.connection.connection_id, name: 'znew', description: 'test', package_name: '$TMP', request_id: 'same-write' };
+    const original = await ops.run('create_program', args);
+    assert.equal(original.status, 'success');
+    assert.deepEqual(await ops.clearCache(), { cleared_sessions: 1, retained_write_requests: 1 });
+    assert.equal(closed, 1);
+    assert.equal((await ops.run('create_program', args)).operation_id, original.operation_id);
+    assert.equal(created, 1, 'replayed writes must not establish a new session or execute again');
+    await ops.run('read_source', { connection_id: args.connection_id, object_uri: object, version: 'active' });
+    assert.equal(created, 2);
+  } finally { await ops.close(); await f.cleanup(); }
+});
+
+test('cache cleanup refuses active work and blocks new requests until session cleanup finishes', async () => {
+  const f = await fixture();
+  try {
+    let finishRead!: () => void;
+    const gate = new Promise<void>(resolve => { finishRead = resolve; });
+    const read = f.backend.read.bind(f.backend);
+    f.backend.read = async (...args) => { await gate; return read(...args); };
+    const pending = f.operations.run('read_source', { connection_id: f.connection.connection_id, object_uri: object, version: 'active' });
+    await assert.rejects(f.operations.clearCache(), (e: AppError) => e.code === 'BUSY');
+    finishRead(); await pending;
+    let finishClose!: () => void;
+    f.backend.close = () => new Promise<void>(resolve => { finishClose = resolve; });
+    const clearing = f.operations.clearCache();
+    await assert.rejects(f.operations.run('list_connections', {}), (e: AppError) => e.code === 'BUSY');
+    await assert.rejects(f.operations.clearCache(), (e: AppError) => e.code === 'BUSY');
+    finishClose(); await clearing;
+    assert.equal((await f.operations.run('list_connections', {})).status, 'success');
+  } finally { await f.cleanup(); }
+});
+
+test('failed cache cleanup reports failure and retains the session for inspection', async () => {
+  const f = await fixture();
+  try {
+    await f.operations.run('read_source', { connection_id: f.connection.connection_id, object_uri: object, version: 'active' });
+    f.backend.close = async () => { throw new Error('private backend details'); };
+    await assert.rejects(f.operations.clearCache(), (e: AppError) => e.code === 'CACHE_CLEAR_FAILED' && !e.message.includes('private'));
+    f.backend.close = async () => {};
+    assert.equal((await f.operations.clearCache()).cleared_sessions, 1);
+  } finally { await f.cleanup(); }
+});
+
 test('source save reports accepted writes when readback fails, without inventing a revision', async () => {
   const f = await fixture(); try {
     const read = f.backend.read.bind(f.backend);
@@ -460,6 +510,7 @@ test('unlock failure preserves confirmed save and returns warning', async () => 
       source: 'REPORT ztest. WRITE 2.', expected_revision: (await f.backend.read(object, 'active')).revision, request_id: 'unlock' });
     assert.equal(result.status, 'success'); assert.equal(result.outcome, 'confirmed');
     assert.ok(result.warnings?.includes('LOCK_CLEANUP_FAILED'));
+    await assert.rejects(f.operations.clearCache(), (e: AppError) => e.code === 'SESSION_NEEDS_REVIEW');
     const blocked = await f.operations.run('create_program', { connection_id: f.connection.connection_id,
       name: 'ZOTHER', description: 'Test', package_name: '$TMP', request_id: 'after-unlock-failure' });
     assert.equal(blocked.error?.code, 'SESSION_NEEDS_REVIEW');

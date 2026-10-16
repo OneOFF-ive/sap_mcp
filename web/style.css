@@ -2,3 +2,6 @@
 /* Keep multi-field validation messages readable and identify the affected input. */
 .inline-error{white-space:pre-line}
 input[aria-invalid="true"],select[aria-invalid="true"]{border-color:#b8384a}
+.cache-actions{margin-top:32px;padding-top:20px;border-top:1px solid #dfe6e9}.cache-actions h3{font-size:15px;margin-bottom:10px}.cache-actions p{line-height:1.8;margin-bottom:16px}
+#log-days{max-width:120px}
+.brand .app-logo{width:32px;height:32px;flex-shrink:0;border-radius:6px;object-fit:contain}

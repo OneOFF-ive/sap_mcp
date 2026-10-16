@@ -32,13 +32,15 @@ sapmcp doctor --json
 
 ## 升级与卸载
 
-升级前先通过托盘退出管理界面，或用 `sapmcp service stop --json` 正常停止已管理的后台实例，再运行新安装包并使用原安装目录。安装程序发现运行中的程序、运行锁或无法确认的状态时会停止安装，不结束进程、不删除锁。存在异常锁时按 [安全说明](security.md) 核实进程后恢复。
+升级前先通过托盘退出管理界面，或用 `sapmcp service stop --json` 正常停止已管理的后台实例，再运行新安装包并使用原安装目录。前台运行的 `ui` / `serve` 请在其终端按 Ctrl+C 正常退出。安装程序会核对运行锁中的 PID 和进程创建时间；确认进程已退出或 PID 已复用的残留锁允许继续，由应用启动时安全回收。运行中的程序、门锁、损坏的锁或无法确认的状态仍会阻止安装，并显示具体原因、相关 PID 或路径；安装程序不结束进程、不删除锁。存在异常锁时按 [安全说明](security.md) 核实进程后恢复。
 
 从 Windows“设置 → 应用”或开始菜单的卸载入口移除程序。卸载会清理本程序添加的 PATH 项、快捷方式与登记的程序文件，保留连接配置、令牌、日志、凭据和未登记文件。若需清除个人数据，应另外明确选择要删除的内容。更改安装位置前先卸载旧位置，再重新安装。
 
 本版本安装包尚未进行发布者代码签名。正式对外发行前应签名并在干净的 Windows 10/11 x64 与 ARM64 环境完成验收；当前开发机测试不能替代这一覆盖。
 
 ## 开发者构建与验证
+
+程序图标原图保存在 `packaging/windows/assets/app-icon.png`。构建会从原图生成 16、24、32、48、64、128、256 像素的 Windows ICO，并写入启动器、安装程序及卸载程序。托盘直接读取安装目录的 `sapmcp.ico`；快捷方式和应用列表明确引用带内容哈希的 `sapmcp-<hash>.ico`，安装后通知 Windows 刷新图标。管理页面引用 `web/app-icon-<hash>.png` 作为侧栏标识及浏览器图标；更换原图时文件名随内容变化，避免继续命中旧缓存。`web/app-icon.png` 保留为兼容资源，构建时同步生成并自动更新页面引用。
 
 在 Windows 项目目录先执行 `npm ci --ignore-scripts`，然后执行 `npm run package:windows`。构建需要 Node.js/npm、Windows 自带的 .NET Framework C# 编译器和 PowerShell 5.1。首次构建需要联网；用户安装生成的包时无需联网。
 
@@ -50,9 +52,13 @@ npm run package:windows
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build.ps1 -Architecture x64
 # 在本机可运行对应架构时验证安装、命令、升级与卸载
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/smoke-test.ps1 -Architecture x64
+# 单独验证安装前检查：失效锁、PID 复用、活动锁、门锁与损坏锁
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/preflight-test.ps1
+# 验证隐藏依赖、点文件、空目录清理，以及未知文件保留和路径边界
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/payload-test.ps1
 ```
 
-产物在 `outputs/installers`，每个 `.exe` 附带 `.sha256`。安装包只包含明确选定的应用文件和生产依赖；源码、测试、本地连接配置、凭据、缓存均不打包。第三方许可随包提供：Node 位于 `runtime/LICENSE`，VC 运行库与 NSIS 位于 `licenses`，依赖许可位于各 `app/node_modules` 包中。
+产物在 `outputs/installers`，每个 `.exe` 附带 `.sha256`。分发时优先使用文件名含 `icon-<hash>` 的副本：更换图标后下载文件名也会变化，避免桌面继续使用同名旧安装包的图标缓存；标准名称副本保留供自动化使用。安装包只包含明确选定的应用文件和生产依赖；源码、测试、本地连接配置、凭据、缓存均不打包。第三方许可随包提供：Node 位于 `runtime/LICENSE`，VC 运行库与 NSIS 位于 `licenses`，依赖许可位于各 `app/node_modules` 包中。
 
 隔离安装测试使用专用临时目录和 `HKCU\Software\SAPMCPInstallerTest`，不修改真实用户 PATH 或桌面；测试快捷方式放在测试安装目录内。测试会保留临时文件用于排错，不应将 `-test-setup.exe` 作为发行包分发。不同架构的测试依次执行，因为它们使用同一个测试注册表位置。
 

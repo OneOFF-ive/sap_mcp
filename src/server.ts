@@ -142,6 +142,7 @@ export async function startHttp(store: ConfigStore, operations: Operations, port
   listener.headersTimeout = 10000;
   return {
     listener,
+    clearCache: () => operations.clearCache(),
     close: async () => {
       stopping = true;
       const stopped = new Promise<void>(resolve => listener.close(() => resolve()));

@@ -7,6 +7,7 @@
 Windows 安装包用户重新打开终端后，在任意目录使用 `sapmcp`；无需安装系统 Node.js。源码方式在项目目录将下列 `sapmcp` 替换为 `node dist/cli.js`。直接使用 CLI 可避免 `npm start` 的额外输出影响 JSON 解析：
 
 ```powershell
+sapmcp version --json
 sapmcp status --json
 sapmcp doctor --json
 sapmcp connection list --json
@@ -16,6 +17,14 @@ sapmcp token list --json
 结果包含 `schema_version: 1`、`status`，以及 `data` 或 `error`；同时检查进程退出码。诊断完成但发现问题时，doctor 返回 `status=success`、`data.healthy=false` 并退出 1；这表示报告已成功生成，并非环境健康。未知参数、缺少必要输入或操作失败返回 `status=error` 并退出 1。`--help` / `--version` 仍为普通帮助文本。
 
 status 不输出密码、MCP 令牌、后台控制令牌或进程命令行。doctor 检查 Node/Windows、构建、配置、目录写入、令牌、运行锁、空闲端口和当前用户凭据是否存在；只用临时目录探测可写性，不更改连接或权限。默认不访问 SAP。只有显式指定 `doctor --connection dev --json` 才测试该连接登录与 discovery，成功不等于拥有全部 SAP 权限。
+
+`sapmcp version` 与 `sapmcp --version` 输出当前应用版本号；`sapmcp version --json` 在 `data.version` 中返回版本，供 AI 客户端解析。它读取本地安装的版本，不访问网络查询更新。
+
+## 缓存与日志清理
+
+历史审计日志使用 `sapmcp logs clear --older-than-days 30 --json` 先预览，用户意图包含删除时再加 `--yes`。默认保留 30 天，0 仍保留当天日志。检查 `deleted_files`、`deleted_bytes`、`failed_files` 和退出码，部分失败不应宣称全部成功；不要将审计记录、令牌文件或配置当作普通缓存随意删除。
+
+清理后台连接缓存使用 `sapmcp cache clear --json`，无需重启服务。检查 `cleared_sessions` 和 `retained_write_requests`；该命令保留写入防重复记录以及全部用户配置。`BUSY` 应等待当前操作结束；`SESSION_NEEDS_REVIEW` 应先核实 SAP 锁；`CACHE_CLEAR_FAILED` 或 `CACHE_CLEAR_UNKNOWN` 不自动重试或重启。UI 持有运行锁时使用其“MCP 服务”页的清理按钮。
 
 ## 安全配置连接
 

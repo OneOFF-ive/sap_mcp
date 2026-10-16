@@ -8,6 +8,86 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
+
+internal static class TrayMenuTheme
+{
+    internal static void Apply(ContextMenuStrip menu)
+    {
+        // Read on every opening so a Windows theme change needs no application restart.
+        if (SystemInformation.HighContrast)
+        {
+            menu.Renderer = new ToolStripSystemRenderer();
+            menu.BackColor = SystemColors.Menu;
+            menu.ForeColor = SystemColors.MenuText;
+        }
+        else
+        {
+            bool dark = UsesDarkTheme();
+            var colors = new TrayMenuColors(dark);
+            menu.Renderer = new TrayMenuRenderer(colors);
+            menu.BackColor = colors.ToolStripDropDownBackground;
+            menu.ForeColor = dark ? Color.FromArgb(245, 245, 245) : Color.FromArgb(32, 32, 32);
+        }
+        foreach (ToolStripItem item in menu.Items)
+        {
+            item.BackColor = menu.BackColor;
+            item.ForeColor = menu.ForeColor;
+        }
+    }
+
+    private static bool UsesDarkTheme()
+    {
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+            {
+                // Tray menus belong to the Windows shell; prefer Windows mode in custom themes.
+                object value = key == null ? null : key.GetValue("SystemUsesLightTheme", key.GetValue("AppsUseLightTheme", 1));
+                return value is int && (int)value == 0;
+            }
+        }
+        catch (System.Security.SecurityException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (IOException) { return false; }
+    }
+}
+
+internal sealed class TrayMenuRenderer : ToolStripProfessionalRenderer
+{
+    internal TrayMenuRenderer(TrayMenuColors colors) : base(colors) { RoundedEdges = false; }
+
+    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+    {
+        bool selected = e.Item.Enabled && (e.Item.Selected || e.Item.Pressed);
+        using (var brush = new SolidBrush(selected ? ColorTable.MenuItemSelected : ColorTable.ToolStripDropDownBackground))
+            e.Graphics.FillRectangle(brush, new Rectangle(Point.Empty, e.Item.Size));
+    }
+
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+    {
+        Color color = e.Item.Enabled ? e.Item.ForeColor : Color.FromArgb(128, 128, 128);
+        TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, e.TextRectangle, color, e.TextFormat);
+    }
+}
+
+internal sealed class TrayMenuColors : ProfessionalColorTable
+{
+    private readonly bool dark;
+    internal TrayMenuColors(bool useDarkTheme) { dark = useDarkTheme; UseSystemColors = false; }
+    public override Color ToolStripDropDownBackground { get { return dark ? Color.FromArgb(32, 32, 32) : Color.FromArgb(250, 250, 250); } }
+    public override Color MenuBorder { get { return dark ? Color.FromArgb(74, 74, 74) : Color.FromArgb(200, 200, 200); } }
+    public override Color MenuItemSelected { get { return dark ? Color.FromArgb(62, 62, 62) : Color.FromArgb(229, 229, 229); } }
+    public override Color MenuItemBorder { get { return MenuItemSelected; } }
+    public override Color MenuItemSelectedGradientBegin { get { return MenuItemSelected; } }
+    public override Color MenuItemSelectedGradientEnd { get { return MenuItemSelected; } }
+    public override Color MenuItemPressedGradientBegin { get { return MenuItemSelected; } }
+    public override Color MenuItemPressedGradientMiddle { get { return MenuItemSelected; } }
+    public override Color MenuItemPressedGradientEnd { get { return MenuItemSelected; } }
+    public override Color ImageMarginGradientBegin { get { return ToolStripDropDownBackground; } }
+    public override Color ImageMarginGradientMiddle { get { return ToolStripDropDownBackground; } }
+    public override Color ImageMarginGradientEnd { get { return ToolStripDropDownBackground; } }
+}
 
 internal sealed class GuiContext : ApplicationContext
 {
@@ -24,10 +104,13 @@ internal sealed class GuiContext : ApplicationContext
     {
         reopen = reopenEvent;
         var menu = new ContextMenuStrip();
+        menu.ShowImageMargin = false;
+        menu.Opening += delegate { TrayMenuTheme.Apply(menu); };
         menu.Items.Add("打开管理界面", null, delegate { OpenBrowser(); });
         exitItem = new ToolStripMenuItem("退出 SAP MCP 管理", null, delegate { Stop(); });
         menu.Items.Add(exitItem);
-        tray = new NotifyIcon { Text = "SAP MCP 管理", Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location), ContextMenuStrip = menu, Visible = true };
+        // Read the packaged artwork directly instead of asking the shell icon cache.
+        tray = new NotifyIcon { Text = "SAP MCP 管理", Icon = new Icon(Path.Combine(Launcher.Root, "sapmcp.ico"), 32, 32), ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += delegate { OpenBrowser(); };
         var start = Launcher.Node(new[] { "ui", "--no-open" });
         start.CreateNoWindow = true;

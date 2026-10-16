@@ -77,7 +77,11 @@ function Copy-VcRuntime([string]$Arch, [string]$Stage, [string]$NativeDirectory)
 
 Push-Location $repository
 try {
-  if (!$SkipTests) { & node $npmCli --prefix $repository test; Assert-Exit 'Tests' }
+  if (!$SkipTests) {
+    & node $npmCli --prefix $repository test; Assert-Exit 'Tests'
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'payload-test.ps1')
+    Assert-Exit 'Installer payload cleanup tests'
+  }
   else { & node $npmCli --prefix $repository run build; Assert-Exit 'Build' }
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $nsisZip = Join-Path $cache 'nsis-3.12.zip'
@@ -117,7 +121,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $cache 'nsis-3.12\COPYING') -Destination (Join-Path $stage 'licenses\NSIS-COPYING.txt')
     $nativeDirectory = Join-Path $app "node_modules\@napi-rs\keyring-win32-$arch-msvc"
     Copy-VcRuntime $arch $stage $nativeDirectory
-    & node (Join-Path $PSScriptRoot 'generate-icon.cjs') (Join-Path $stage 'sapmcp.ico'); Assert-Exit 'Icon generation'
+    & (Join-Path $PSScriptRoot 'generate-icon.ps1') -Output (Join-Path $stage 'sapmcp.ico') -WebIcon (Join-Path $app 'web\app-icon.png')
+    $iconHash = (Get-FileHash -LiteralPath (Join-Path $stage 'sapmcp.ico')).Hash.Substring(0,12).ToLowerInvariant()
+    $iconName = "sapmcp-$iconHash.ico"
     & $csc /nologo /target:exe /platform:anycpu /codepage:65001 "/win32icon:$stage\sapmcp.ico" "/out:$bin\sapmcp.exe" (Join-Path $PSScriptRoot 'Launcher.cs')
     Assert-Exit 'Console launcher compilation'
     & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 /define:GUI /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32icon:$stage\sapmcp.ico" "/out:$bin\sapmcp-gui.exe" (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GuiLauncher.cs')
@@ -129,15 +135,22 @@ try {
 
     $receipt = @{ app_version=$package.version; node_version=$lock.nodeVersion; architecture=$arch; built_at=[DateTime]::UtcNow.ToString('o'); node_archive_sha256=$lock.node.$arch.sha256; nsis_archive_sha256=$lock.nsis.sha256; vc_runtime_version=$lock.vcRuntime.version; vc_runtime_archive_sha256=$lock.vcRuntime.$arch.sha256 }
     $receipt | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'build-info.json') -Encoding UTF8
-    $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File | ForEach-Object { $_.FullName.Substring($stage.Length + 1) })
-    @{ schema_version=1; app_id='org.sapmcp.desktop'; version=$package.version; architecture=$arch; files=$files } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'install-manifest.json') -Encoding UTF8
+    # NSIS packages dotfiles and empty directories too; record the same complete payload.
+    $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($stage.Length + 1) })
+    $directories = @(Get-ChildItem -LiteralPath $stage -Recurse -Directory -Force | ForEach-Object { $_.FullName.Substring($stage.Length + 1) })
+    @{ schema_version=1; app_id='org.sapmcp.desktop'; version=$package.version; architecture=$arch; files=$files; directories=$directories } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'install-manifest.json') -Encoding UTF8
     $suffix = if ($TestMode) { '-test' } else { '' }
     $target = Join-Path $output "SAPMCP-$($package.version)-win-$arch$suffix-setup.exe"
-    $arguments = @('/V2', '/INPUTCHARSET', 'UTF8', "/DAPP_VERSION=$($package.version)", "/DTARGET_ARCH=$arch", "/DSTAGE_DIR=$stage", "/DOUTPUT_FILE=$target")
+    $arguments = @('/V2', '/INPUTCHARSET', 'UTF8', "/DAPP_VERSION=$($package.version)", "/DTARGET_ARCH=$arch", "/DSTAGE_DIR=$stage", "/DOUTPUT_FILE=$target", "/DICON_FILENAME=$iconName")
     if ($TestMode) { $arguments += '/DTEST_MODE' }
     & $compiler @arguments (Join-Path $PSScriptRoot 'installer.nsi'); Assert-Exit "Installer compilation ($arch)"
     $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($target))" | Set-Content -LiteralPath ($target + '.sha256') -Encoding ASCII
+    # Prefer this name for distribution: Explorer cannot reuse an older artwork's path cache.
+    $displayTarget = Join-Path $output "SAPMCP-$($package.version)-win-$arch$suffix-icon-$iconHash-setup.exe"
+    Copy-Item -LiteralPath $target -Destination $displayTarget -Force
+    "$hash  $([IO.Path]::GetFileName($displayTarget))" | Set-Content -LiteralPath ($displayTarget + '.sha256') -Encoding ASCII
     Write-Host "Created: $target"
+    Write-Host "Distribution copy: $displayTarget"
   }
 } finally { Pop-Location }

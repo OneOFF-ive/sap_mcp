@@ -42,7 +42,32 @@ npm start -- token revoke REPLACE_WITH_TOKEN_ID
 
 撤销使用创建时返回的令牌 ID，不是令牌明文。令牌可在服务运行时创建或撤销，撤销对后续请求生效。配置改动后客户端应重新列出连接。
 
+## 清理连接缓存
+
+管理界面的“MCP 服务”页提供“清理连接缓存”按钮；后台服务可使用 `sapmcp cache clear --json`。源码方式对应 `node dist/cli.js cache clear --json`。
+
+清理会正常关闭空闲的 SAP 会话，下次查询时重新登录。返回 `cleared_sessions`（清理的会话数）和 `retained_write_requests`（保留的写入防重复记录数）。服务未启动时返回 0；CLI 不操作前台 UI 的缓存，请使用该界面的按钮。此功能无需重启 MCP，也不会删除连接配置、密码、令牌、日志或浏览器管理凭据。
+
+当前没有落盘的查询结果缓存。写操作的 request_id 记录用于防止重复提交，不作为普通缓存删除。正在执行操作、清理中或 SAP 解锁状态异常时会拒绝清理；会话关闭失败会报告失败并保留未确认关闭的会话，不自动重试、重启或绕过锁保护。
+
+## 清理历史日志
+
+在“MCP 服务”页设置保留天数后，点击“清理过期日志”。界面先显示待删除文件数和大小，确认后才永久删除。默认保留 30 天；设为 0 仍保留当天日志。清理按 UTC 日历日期计算，文件日期和最后修改时间都早于保留边界时才符合条件。
+
+```powershell
+# 先预览，不删除文件
+sapmcp logs clear --older-than-days 30 --json
+# 确认后执行删除
+sapmcp logs clear --older-than-days 30 --yes --json
+```
+
+仅处理当前日志目录中符合 `operations-YYYY-MM-DD-序号.jsonl` 格式的历史审计文件，保留当天日志、近期修改的文件、未知文件和子目录，不跟随符号链接或目录联接。不扫描系统临时目录或 npm 缓存。清理不需要停止 MCP，也不更改连接配置、凭据或令牌。
+
+结果包含 `dry_run`、`eligible_files` / `eligible_bytes`、`deleted_files` / `deleted_bytes` 和 `failed_files`。`failed_files` 大于 0 表示存在未能检查或删除的文件，CLI 同时返回非零退出码；不能仅根据顶层 `status=success` 判断全部清理成功。默认目录仍为 `%LOCALAPPDATA%\sap-mcp\logs`，自定义 `SAP_MCP_LOG_DIR` 继续生效。删除前请备份需要保留的审计记录。
+
 ## 3. 客户端配置
+
+
 
 | 配置项 | 值 |
 | --- | --- |

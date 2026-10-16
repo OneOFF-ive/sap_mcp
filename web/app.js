@@ -73,7 +73,7 @@ function render() {
   if (state.running) $('#port').value = state.mcp_port;
   $('#mcp-url').textContent = `http://127.0.0.1:${$('#port').value}/mcp`;
   $('#add-connection').disabled = working || state.running; $('#empty-add').disabled = working || state.running;
-  for (const selector of ['#start-service', '#stop-service', '#create-token']) $(selector).disabled = working;
+  for (const selector of ['#start-service', '#stop-service', '#create-token', '#clear-cache', '#clear-logs', '#log-days']) $(selector).disabled = working;
   icons();
 }
 async function refresh() { state = await api('state'); render(); }
@@ -172,6 +172,22 @@ $('#create-token').onclick = async () => {
   if (result) { $('#new-token').value = `Bearer ${result.token}`; $('#token-dialog').showModal(); }
 };
 $('#start-service').onclick = () => act(() => api('service/start', 'POST', { port: Number($('#port').value) }), 'MCP 服务已启动');
+$('#clear-cache').onclick = async () => {
+  const result = await act(() => api('cache/clear', 'POST'), null);
+  if (result) { tests.clear(); render(); toast(`已清理 ${result.cleared_sessions} 个连接缓存，保留 ${result.retained_write_requests} 条写入防重复记录`); }
+};
+$('#clear-logs').onclick = async () => {
+  if (!$('#log-days').reportValidity()) return;
+  const days = Number($('#log-days').value);
+  const preview = await act(() => api('logs/clear', 'POST', { older_than_days: days, confirm: false }), null);
+  if (!preview) return;
+  if (preview.failed_files) { toast('部分日志无法检查，请检查文件权限后重试。', true); return; }
+  if (!preview.eligible_files) { toast('没有符合条件的历史日志，当天日志已保留。'); return; }
+  confirmAction('删除历史日志', `将永久删除 ${preview.eligible_files} 个历史日志文件，共 ${preview.eligible_bytes.toLocaleString()} 字节。当天日志和最近 ${days} 天的日志会保留。此操作无法撤销，是否继续？`, async () => {
+    const result = await act(() => api('logs/clear', 'POST', { older_than_days: days, confirm: true }), null);
+    if (result) toast(`已删除 ${result.deleted_files} 个日志文件，释放 ${result.deleted_bytes.toLocaleString()} 字节${result.failed_files ? `；${result.failed_files} 个文件清理失败` : ''}`, result.failed_files > 0);
+  });
+};
 $('#stop-service').onclick = () => confirmAction('停止 MCP 服务', '等待正在执行的操作结束后停止服务？', () => act(() => api('service/stop', 'POST'), 'MCP 服务已停止'));
 async function copy(value) { try { await navigator.clipboard.writeText(value); toast('已复制'); } catch { toast('复制失败，请手动选择内容', true); } }
 $('#copy-url').onclick = () => copy($('#mcp-url').textContent);

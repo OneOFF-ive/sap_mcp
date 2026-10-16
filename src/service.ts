@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { ConfigStore, Credentials } from './config.js';
 import { AppError } from './errors.js';
 import { acquireLease, inspectLease, type LeaseStatus } from './lease.js';
-import { Operations } from './operations.js';
+import { Operations, type CacheClearResult } from './operations.js';
 import { startHttp } from './server.js';
 import { cliFailure } from './cli-output.js';
 import { localPortInUse } from './local-port.js';
@@ -38,10 +38,10 @@ async function readRecord(directory: string): Promise<ManagedRecord | undefined>
 }
 
 // Never follow redirects or accept a URL from the metadata file.
-async function control(record: ManagedRecord, action: 'status' | 'stop') {
-  return new Promise<{ instance_id: string; pid: number; stopping: boolean }>((resolve, reject) => {
+async function control(record: ManagedRecord, action: 'status' | 'stop' | 'cache/clear') {
+  return new Promise<{ instance_id: string; pid: number; stopping: boolean; cache?: CacheClearResult }>((resolve, reject) => {
     const req = request({ hostname: '127.0.0.1', port: record.control_port, path: `/${action}`,
-      method: action === 'stop' ? 'POST' : 'GET', headers: { Authorization: `Bearer ${record.control_token}` } }, res => {
+      method: action === 'status' ? 'GET' : 'POST', headers: { Authorization: `Bearer ${record.control_token}` } }, res => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', chunk => {
@@ -54,11 +54,12 @@ async function control(record: ManagedRecord, action: 'status' | 'stop') {
           if (res.statusCode !== 200) throw new Error('Control request rejected');
           const result = JSON.parse(body);
           if (result.instance_id !== record.instance_id || result.pid !== record.pid) throw new Error('Instance mismatch');
+          if (result.error) throw new AppError(result.error.code, result.error.message);
           resolve(result);
         } catch (error) { reject(error); }
       });
     });
-    req.setTimeout(1500, () => req.destroy(new Error('Control request timed out')));
+    req.setTimeout(action === 'cache/clear' ? 30000 : 1500, () => req.destroy(new Error('Control request timed out')));
     req.on('error', reject);
     req.end();
   });
@@ -159,6 +160,25 @@ async function stop(directory: string): Promise<ServiceStatus> {
   throw new AppError('SERVICE_STOP_UNKNOWN', 'Graceful shutdown is still pending. Run status later; SAP work may still be finishing.');
 }
 
+export function clearServiceCache(directory: string): Promise<CacheClearResult> {
+  return withServiceCommand(directory, async () => {
+    const before = await serviceStatus(directory);
+    if (before.lease.guard_present) throw new AppError('LEASE_BUSY', '运行锁状态待核实，无法清理缓存。');
+    if (before.state === 'stopped') return { cleared_sessions: 0, retained_write_requests: 0 };
+    if (before.state !== 'running' || !before.managed) throw new AppError('SERVICE_NOT_MANAGED', '请在持有运行锁的管理界面中清理连接缓存；无法确认的进程不会被操作。');
+    const record = await readRecord(directory);
+    if (!record || record.pid !== before.pid || record.lease_nonce !== before.lease.nonce) throw new AppError('SERVICE_STATE_CHANGED', '服务状态已变更，请重新检查。');
+    try {
+      const result = await control(record, 'cache/clear');
+      if (!result.cache || !Number.isInteger(result.cache.cleared_sessions) || !Number.isInteger(result.cache.retained_write_requests)) throw new Error('Invalid cache response');
+      return result.cache;
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError('CACHE_CLEAR_UNKNOWN', '无法确认清理结果，请先检查服务状态；不会自动重试或重启服务。');
+    }
+  });
+}
+
 export function stopService(directory: string) {
   return withServiceCommand(directory, () => stop(directory));
 }
@@ -207,9 +227,15 @@ export async function runManagedService(store: ConfigStore, credentials: Credent
       if (req.headers.host !== `127.0.0.1:${controlPort}` || req.headers.origin !== undefined) { res.writeHead(403).end(); return; }
       if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) { res.writeHead(401).end(); return; }
       const isStop = req.url === '/stop' && req.method === 'POST';
-      if (!isStop && !(req.url === '/status' && req.method === 'GET')) { res.writeHead(404).end(); return; }
+      const isClear = req.url === '/cache/clear' && req.method === 'POST';
+      if (!isStop && !isClear && !(req.url === '/status' && req.method === 'GET')) { res.writeHead(404).end(); return; }
       req.resume();
       res.setHeader('Content-Type', 'application/json');
+      if (isClear) {
+        void runtime!.clearCache().then(cache => res.end(JSON.stringify({ instance_id: instanceId, pid: process.pid, stopping: Boolean(shutdown), cache })))
+          .catch(error => res.end(JSON.stringify({ instance_id: instanceId, pid: process.pid, error: cliFailure(error) })));
+        return;
+      }
       res.end(JSON.stringify({ instance_id: instanceId, pid: process.pid, stopping: isStop || Boolean(shutdown) }));
       if (isStop) setImmediate(() => { void close().catch(() => { process.exitCode = 1; }); });
     });

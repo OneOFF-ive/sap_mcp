@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { open, readFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { ConfigStore, WindowsCredentials, connectionSchema, type Connection } from './config.js';
 import { AdtBackend } from './adt.js';
 import { Operations } from './operations.js';
@@ -14,14 +15,16 @@ import { acquireLease } from './lease.js';
 import { startAdmin } from './admin.js';
 import { printSuccess, printFailure, parsePort } from './cli-output.js';
 import { installationStatus, doctor } from './diagnostics.js';
-import { startService, stopService, restartService, serviceStatus, runManagedService, reportStartupFailure } from './service.js';
+import { startService, stopService, restartService, serviceStatus, clearServiceCache, runManagedService, reportStartupFailure } from './service.js';
 import { promptLocalPassword } from './password-prompt.js';
+import { cleanupLogs, retentionDays } from './log-cleanup.js';
 
 const store = new ConfigStore();
 const credentials = new WindowsCredentials();
 const jsonOutput = process.argv.includes('--json');
+const appVersion: string = createRequire(import.meta.url)('../package.json').version;
 const cli = new Command().name('sapmcp').description('Local SAP ADT MCP server and lifecycle manager')
-  .version('0.1.0').option('--json', 'Return one JSON result; never prompt in the terminal')
+  .version(appVersion).option('--json', 'Return one JSON result; never prompt in the terminal')
   .exitOverride().configureOutput({ writeErr: text => { if (!jsonOutput) process.stderr.write(text); } });
 
 async function mutate<T>(action: () => Promise<T>, connectionChange = true): Promise<T> {
@@ -88,6 +91,9 @@ async function connectionInput(name: string, options: ConnectionOptions, old?: C
   return { connection, secret };
 }
 
+cli.command('version').description('Show the current application version; supports --json')
+  .action(() => jsonOutput ? printSuccess({ version: appVersion }, true) : console.log(appVersion));
+
 cli.command('status').description('Inspect configuration and process state without returning credentials')
   .action(async () => printSuccess(await installationStatus(store), jsonOutput));
 cli.command('doctor').description('Diagnose local setup; SAP probing is opt-in with --connection')
@@ -96,6 +102,19 @@ cli.command('doctor').description('Diagnose local setup; SAP probing is opt-in w
     const result = await doctor(store, credentials, parsePort(options.port), options.connection);
     printSuccess(result, jsonOutput);
     if (!result.healthy) process.exitCode = 1;
+  });
+
+cli.command('cache').description('Manage SAP connection caches; preserve configuration and write deduplication')
+  .command('clear').description('Close idle cached SAP sessions; refuse cleanup while operations are pending')
+  .action(async () => printSuccess(await clearServiceCache(store.directory), jsonOutput));
+
+cli.command('logs').description('Manage historical audit logs; always preserve today and unknown files')
+  .command('clear').option('--older-than-days <days>', 'Keep this many UTC calendar days; 0 still preserves today', '30')
+  .option('--yes', 'Delete eligible historical logs; without this flag preview only')
+  .action(async options => {
+    const result = await cleanupLogs(retentionDays(options.olderThanDays), Boolean(options.yes));
+    printSuccess(result, jsonOutput);
+    if (result.failed_files) process.exitCode = 1;
   });
 
 const service = cli.command('service').description('Manage only background instances created by this CLI');

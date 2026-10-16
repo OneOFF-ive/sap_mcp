@@ -44,8 +44,20 @@ async function freePort() {
 test('JSON diagnostics and argument errors are structured; tokens are not printed or overwritten', async () => {
   const f = await fixture();
   try {
+    const expectedVersion = JSON.parse(await readFile(resolve('package.json'), 'utf8')).version;
+    const version = await f.run('version');
+    assert.equal(version.code, 0);
+    assert.deepEqual(version.result, { schema_version: 1, status: 'success', data: { version: expectedVersion } });
+    for (const argument of ['version', '--version']) {
+      const text = await execute(process.execPath, [resolve('dist/cli.js'), argument], { env: f.env, encoding: 'utf8', timeout: 65000 });
+      assert.equal(text.stdout.trim(), expectedVersion); assert.equal(text.stderr, '');
+    }
     const status = await f.run('status');
     assert.equal(status.code, 0); assert.equal(status.result.data.service.state, 'stopped');
+    assert.equal((await f.run('cache', 'clear')).result.data.cleared_sessions, 0);
+    const logsPreview = await f.run('logs', 'clear');
+    assert.equal(logsPreview.code, 0); assert.equal(logsPreview.result.data.dry_run, true);
+    assert.equal((await f.run('logs', 'clear', '--older-than-days', '-1')).result.error.code, 'INVALID_INPUT');
     const diagnosis = await f.run('doctor');
     assert.equal(diagnosis.code, 1); assert.equal(diagnosis.result.data.healthy, false);
     assert.equal(diagnosis.result.data.sap_probe_performed, false);
@@ -105,9 +117,14 @@ test('managed background lifecycle authenticates control, preserves port on rest
     assert.equal(started.code, 0, JSON.stringify(started.result));
     assert.equal(started.result.data.state, 'running');
     const pid = started.result.data.pid;
+    const cleared = await f.run('cache', 'clear');
+    assert.equal(cleared.code, 0, JSON.stringify(cleared.result));
+    assert.deepEqual(cleared.result.data, { cleared_sessions: 0, retained_write_requests: 0 });
+    assert.equal((await f.run('service', 'status')).result.data.pid, pid);
     const record = JSON.parse(await readFile(join(f.directory, 'managed-service.json'), 'utf8'));
     assert.equal(JSON.stringify(started.result).includes(record.control_token), false);
     assert.equal((await fetch(`http://127.0.0.1:${record.control_port}/stop`, { method: 'POST' })).status, 401);
+    assert.equal((await fetch(`http://127.0.0.1:${record.control_port}/cache/clear`, { method: 'POST' })).status, 401);
     assert.equal((await fetch(`http://127.0.0.1:${record.control_port}/stop`, { method: 'POST',
       headers: { Authorization: `Bearer ${record.control_token}`, Origin: 'http://evil.test' } })).status, 403);
     assert.equal((await f.run('service', 'start', '--port', String(port))).result.data.pid, pid);
