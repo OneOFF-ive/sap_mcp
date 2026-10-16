@@ -1,10 +1,12 @@
 # 部署与运维手册
 
-适用：Windows、Node.js 22+、SAP MCP 0.1.0。核对日期：2026-10-15。
+适用：Windows、SAP MCP 0.1.0。源码方式需要 Node.js 22+；Windows 安装包已内置运行环境。核对日期：2026-10-16。
 
 ## 1. 安装与启动
 
-在项目目录的 PowerShell 执行：
+普通用户请按 [Windows 安装包](windows-installer.md) 安装，从桌面或开始菜单打开管理界面，在任意目录使用 `sapmcp`。退出使用托盘菜单；关闭浏览器仅关闭页面。
+
+以下为源码方式。在项目目录的 PowerShell 执行：
 
 ```powershell
 npm ci --ignore-scripts

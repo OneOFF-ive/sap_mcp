@@ -20,7 +20,7 @@ import { promptLocalPassword } from './password-prompt.js';
 const store = new ConfigStore();
 const credentials = new WindowsCredentials();
 const jsonOutput = process.argv.includes('--json');
-const cli = new Command().name('sap-mcp').description('Local SAP ADT MCP server and lifecycle manager')
+const cli = new Command().name('sapmcp').description('Local SAP ADT MCP server and lifecycle manager')
   .version('0.1.0').option('--json', 'Return one JSON result; never prompt in the terminal')
   .exitOverride().configureOutput({ writeErr: text => { if (!jsonOutput) process.stderr.write(text); } });
 
@@ -250,8 +250,11 @@ cli.command('ui').description('Open the interactive local management interface')
     if (jsonOutput) throw new AppError('INTERACTION_REQUIRED', 'ui is an interactive foreground command. Use status/doctor/service commands with --json for automation.');
     const port = parsePort(options.port);
     const release = await acquireLease(store.directory, 'runtime.lock');
+    let runtime: Awaited<ReturnType<typeof startAdmin>> | undefined;
+    let closing = false;
+    const stop = async () => { if (closing) return; closing = true; try { await runtime?.close(); } finally { await release(); } };
     try {
-      const runtime = await startAdmin(store, credentials, port);
+      runtime = await startAdmin(store, credentials, port, undefined, stop);
       console.log(`SAP MCP management: http://127.0.0.1:${port}/`);
       if (options.open && process.platform === 'win32') {
         const browser = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
@@ -259,8 +262,6 @@ cli.command('ui').description('Open the interactive local management interface')
           { windowsHide: true, cwd: process.env.SystemRoot ?? 'C:\\Windows', stdio: 'ignore', env: { ...process.env, SAP_MCP_BROWSER_URL: runtime.url } });
         browser.on('error', () => console.error('Browser launch failed; use the local session URL.'));
       }
-      let closing = false;
-      const stop = async () => { if (closing) return; closing = true; try { await runtime.close(); } finally { await release(); } };
       process.once('SIGINT', () => { void stop(); });
       process.once('SIGTERM', () => { void stop(); });
       console.log(`Management session URL: ${runtime.url}`);

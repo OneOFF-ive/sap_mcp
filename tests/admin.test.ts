@@ -37,6 +37,7 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.equal((await store.load()).tokens.length, 0);
     assert.equal((await fetch(`${origin}/api/state`, { headers: { 'X-Admin-Token': key, Origin: 'http://evil.test' } })).status, 403);
     assert.equal((await fetch(`${origin}/api/tokens`, { method: 'POST', headers: { 'X-Admin-Token': key } })).status, 403);
+    assert.equal((await fetch(`${origin}/api/application/stop`, { method: 'POST', headers: { Origin: origin } })).status, 401);
     const draft = { name: 'test_system', base_url: 'http://sap.test:8000', client: '001', username: 'TEST', language: 'EN', write_enabled: false, password: 'synthetic-secret' };
     for (const name of ['中文系统', 'sap system', 'sap.system', 'sap/system']) {
       const invalid = await api('connections', 'POST', { ...draft, name });
@@ -97,5 +98,6 @@ test('local web management protects APIs and manages connections, credentials, t
     await api(`tokens/${token.body.id}`, 'DELETE'); assert.equal(await store.authenticate(token.body.token), false);
     assert.equal((await api('service/start', 'POST', { port })).body.error.code, 'TOKEN_REQUIRED');
     assert.equal((await api(`connections/${id}`, 'DELETE')).status, 200); assert.equal(passwords.size, 0);
+    assert.equal((await api('application/stop', 'POST')).body.success, true);
   } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }); }
 });

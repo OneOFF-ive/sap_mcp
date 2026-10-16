@@ -5,24 +5,24 @@ description: "Install, configure, diagnose, start, stop, restart, and upgrade a 
 
 # SAP MCP Manager
 
-Work in the user's SAP MCP checkout (`package.json` name `sap-mcp`). Use the project directory already available in context; ask for the location only if unknown. This workflow needs a local terminal and Windows for credential entry. It does not depend on an already-running MCP connection.
+First resolve `sapmcp` in the terminal. A Windows installer provides this command in any directory with its own Node.js runtime. For a source checkout (`package.json` name `sap-mcp`), use `node <checkout>/dist/cli.js` instead of `sapmcp` in the examples. Use a known checkout only when the installed command is unavailable or source development is intended. This workflow needs a local terminal and Windows for credential entry. It does not depend on an already-running MCP connection.
 
 ## Inspect and install
 
-Use `node dist/cli.js status --json` and `node dist/cli.js doctor --json`. Invoke Node directly so npm banners do not break JSON parsing. Every operational JSON result has `schema_version`, `status`, and `data` or `error`; also inspect the process exit code. A completed doctor command can have `status=success` but exit 1 and `data.healthy=false` because checks failed. By default doctor makes no SAP request; `--connection <name>` explicitly tests that login and ADT discovery.
+Use `sapmcp status --json` and `sapmcp doctor --json`. Invoke the CLI directly so npm banners do not break JSON parsing. Every operational JSON result has `schema_version`, `status`, and `data` or `error`; also inspect the process exit code. A completed doctor command can have `status=success` but exit 1 and `data.healthy=false` because checks failed. By default doctor makes no SAP request; `--connection <name>` explicitly tests that login and ADT discovery.
 
-If Node or the compiled CLI is missing, inspect the environment first. The project requires Node.js 22+. Install the checkout's pinned dependencies with `npm ci --ignore-scripts` and build with `npm run build`. Do not run a broad dependency upgrade or `npm audit fix --force` as setup. Respect user-selected installation paths and versions.
+For an installer deployment, inspect the installation's bundled runtime before suggesting system Node.js or npm. Reopen the parent terminal application if it has not picked up the new PATH. Repair using the intended installer version when program files are missing. For source development, the project requires Node.js 22+; install pinned dependencies with `npm ci --ignore-scripts` and build with `npm run build`. Do not run a broad dependency upgrade or `npm audit fix --force` as setup. Respect user-selected installation paths and versions.
 
 Report the diagnosed cause and perform the authorized fix. Do not keep retrying an unchanged failure. `unknown`, `unresponsive`, or `lease.guard_present=true` requires inspection; never delete a lock or kill a process just to make startup succeed.
 
 ## Configure connections and credentials
 
-Use `node dist/cli.js connection list --json` to find the exact name and Client. Names allow English letters, digits, `_` and `-`; Client is exactly three digits. Keep writes off unless the user requests enabling them. Treat the user's request for a named operation as authorization; do not ask for duplicate confirmation.
+Use `sapmcp connection list --json` to find the exact name and Client. Names allow English letters, digits, `_` and `-`; Client is exactly three digits. Keep writes off unless the user requests enabling them. Treat the user's request for a named operation as authorization; do not ask for duplicate confirmation.
 
 For a new connection, collect only non-secret fields and run:
 
 ```powershell
-node dist/cli.js connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
+sapmcp connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
 ```
 
 Explain that a local password window will appear, then let the human enter the password there. Never ask for a password in chat, pass it on the command line or through an environment variable, or print credential-store content. `--json` never prompts in the terminal; without `--password-prompt`, a required password produces `INTERACTION_REQUIRED`. Cancelled input must not be retried automatically. Passwords are stored under the connection UUID in the current Windows user's credential store.
@@ -42,10 +42,10 @@ Revoke only the intended token ID with `token revoke <id> --json`. Revoking a to
 ## Start, stop, restart and recover
 
 ```powershell
-node dist/cli.js service start --port 8765 --json
-node dist/cli.js service status --json
-node dist/cli.js service restart --json
-node dist/cli.js service stop --json
+sapmcp service start --port 8765 --json
+sapmcp service status --json
+sapmcp service restart --json
+sapmcp service stop --json
 ```
 
 Startup needs at least one token. A managed service runs hidden in the background; restart preserves its port unless explicitly changed. Stop waits for graceful shutdown and does not force-kill SAP work. Control is authenticated separately from MCP tokens, and process identity is checked against the runtime lease. The JSON status omits control secrets.
@@ -55,6 +55,8 @@ Startup needs at least one token. A managed service runs hidden in the backgroun
 Managed background mode is not an installed Windows Service or boot-time supervisor. Do not promise unattended crash recovery or reboot persistence. Fixes take effect after restarting the appropriate process; changing files does not patch an already running server.
 
 ## Upgrade and uninstall requests
+
+Identify whether this is an installer deployment or a source checkout. For an installed deployment, normally stop a managed background service or let the human exit the GUI using its tray menu, then run the intended architecture/version installer at the existing location. Use the registered uninstaller for removal; do not delete the program directory or operate on packaged dependencies as a checkout. Installer uninstall preserves configuration, logs, credentials and unknown files. Updating or removing that data is a separate user request.
 
 For a requested upgrade, record the current revision, inspect local changes and identify whether a managed service is running. Preserve configuration and credentials. Update only the intended checkout/version, rebuild and test before restoring service. Do not discard user changes, force-reset branches, or automatically downgrade dependencies. On build failure report the current revision and actual service state; use an isolated known-good release directory when available rather than overwriting user work for rollback.
 

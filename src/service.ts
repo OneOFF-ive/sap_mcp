@@ -97,7 +97,12 @@ async function start(directory: string, port: number): Promise<ServiceStatus> {
   const instanceId = randomUUID();
   const startupFile = join(directory, `service-start-${instanceId}.json`);
   const cliPath = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
-  const child = spawn(process.execPath, [cliPath, 'service', '_run', '--port', String(port)], {
+  // The installed Windows launcher creates the daemon without inheriting any
+  // terminal handles. Older Node/libuv versions can otherwise keep an AI
+  // client's output pipe open even with detached:true and stdio:'ignore'.
+  const launcher = process.platform === 'win32' ? process.env.SAP_MCP_WINDOWS_LAUNCHER : undefined;
+  const child = spawn(launcher ?? process.execPath,
+    launcher ? ['--internal-service-run', String(port)] : [cliPath, 'service', '_run', '--port', String(port)], {
     detached: true, windowsHide: true, stdio: 'ignore',
     env: { ...process.env, SAP_MCP_CONFIG_DIR: directory, SAP_MCP_STARTUP_ID: instanceId }
   });
@@ -119,7 +124,7 @@ async function start(directory: string, port: number): Promise<ServiceStatus> {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      if (child.exitCode !== null) throw new AppError('SERVICE_START_FAILED', 'The background process exited before becoming ready. Run doctor.');
+      if (child.exitCode !== null && (!launcher || child.exitCode !== 0)) throw new AppError('SERVICE_START_FAILED', 'The background process exited before becoming ready. Run doctor.');
       await delay(150);
     }
     throw new AppError('SERVICE_START_UNKNOWN', 'Startup was not confirmed. Run status before retrying; a process may still be starting.');

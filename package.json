@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Local HTTP MCP server for SAP ABAP development",
   "bin": {
+    "sapmcp": "dist/cli.js",
     "sap-mcp": "dist/cli.js"
   },
   "scripts": {
@@ -12,6 +13,8 @@
     "start": "node dist/cli.js",
     "dev": "node --import tsx src/cli.ts",
     "pretest": "npm run build",
+    "package:windows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/build.ps1",
+    "test:installer": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/smoke-test.ps1",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "engines": {

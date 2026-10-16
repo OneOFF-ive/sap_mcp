@@ -5,6 +5,7 @@
 | 读者或目标 | 入口 |
 | --- | --- |
 | 首次安装与运行 | [项目 README](../README.md) |
+| Windows 安装包、快捷方式与升级卸载 | [Windows 安装包](windows-installer.md) |
 | agent 学习如何操作 SAP | [MCP 客户端 SAP 操作手册](mcp-client-guide.md) |
 | 管理连接、令牌、服务与日志 | [部署与运维手册](operations.md) |
 | 理解模块、会话、锁和版本保护 | [架构文档](architecture.md) |

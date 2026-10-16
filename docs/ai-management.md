@@ -4,13 +4,13 @@
 
 ## 机器可读入口
 
-在项目目录使用 `node dist/cli.js`，避免 `npm start` 的额外输出影响 JSON 解析：
+Windows 安装包用户重新打开终端后，在任意目录使用 `sapmcp`；无需安装系统 Node.js。源码方式在项目目录将下列 `sapmcp` 替换为 `node dist/cli.js`。直接使用 CLI 可避免 `npm start` 的额外输出影响 JSON 解析：
 
 ```powershell
-node dist/cli.js status --json
-node dist/cli.js doctor --json
-node dist/cli.js connection list --json
-node dist/cli.js token list --json
+sapmcp status --json
+sapmcp doctor --json
+sapmcp connection list --json
+sapmcp token list --json
 ```
 
 结果包含 `schema_version: 1`、`status`，以及 `data` 或 `error`；同时检查进程退出码。诊断完成但发现问题时，doctor 返回 `status=success`、`data.healthy=false` 并退出 1；这表示报告已成功生成，并非环境健康。未知参数、缺少必要输入或操作失败返回 `status=error` 并退出 1。`--help` / `--version` 仍为普通帮助文本。
@@ -20,10 +20,10 @@ status 不输出密码、MCP 令牌、后台控制令牌或进程命令行。doc
 ## 安全配置连接
 
 ```powershell
-node dist/cli.js connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
-node dist/cli.js connection edit dev --language ZH --disable-writes --json
-node dist/cli.js connection test dev --json
-node dist/cli.js connection remove dev --yes --json
+sapmcp connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
+sapmcp connection edit dev --language ZH --disable-writes --json
+sapmcp connection test dev --json
+sapmcp connection remove dev --yes --json
 ```
 
 `--password-prompt` 弹出本机 Windows 密码窗口，密码通过内部管道送入 Windows 凭据管理器，不出现在 AI 命令输出、参数、环境变量或配置文件里。窗口取消、不可用或超时会失败，不保存新密码。新连接及登录地址/Client/用户名变化时必须重新录入密码；未传该选项时，JSON 模式返回 `INTERACTION_REQUIRED`，不会卡在终端询问中。
@@ -35,10 +35,10 @@ node dist/cli.js connection remove dev --yes --json
 ## 后台服务
 
 ```powershell
-node dist/cli.js service start --port 8765 --json
-node dist/cli.js service status --json
-node dist/cli.js service restart --json
-node dist/cli.js service stop --json
+sapmcp service start --port 8765 --json
+sapmcp service status --json
+sapmcp service restart --json
+sapmcp service stop --json
 ```
 
 start 要求至少一个 MCP 令牌。后台进程隐藏运行，不依赖发起命令的终端保持打开。重复启动相同端口的已管理实例会返回原状态；更改端口使用 restart 的 `--port`。不指定端口的 restart 保留当前已管理端口，停止状态则默认 8765。
@@ -60,9 +60,9 @@ stop 通过单独鉴权的 loopback 控制接口请求正常关闭，等待已�
 ## 令牌及客户端参数
 
 ```powershell
-node dist/cli.js token create --out C:\Users\USER\AppData\Roaming\sap-mcp\client-token.json --json
-node dist/cli.js client-config --token-file C:\Users\USER\AppData\Roaming\sap-mcp\client-token.json --out C:\Users\USER\AppData\Roaming\sap-mcp\connection-parameters.json --json
-node dist/cli.js token revoke TOKEN_ID --json
+sapmcp token create --out C:\Users\USER\AppData\Roaming\sap-mcp\client-token.json --json
+sapmcp client-config --token-file C:\Users\USER\AppData\Roaming\sap-mcp\client-token.json --out C:\Users\USER\AppData\Roaming\sap-mcp\connection-parameters.json --json
+sapmcp token revoke TOKEN_ID --json
 ```
 
 替换示例路径与 ID。父目录需要已存在，输出文件必须是新文件，不覆盖已有文件。JSON 结果只返回 ID/路径，不返回明文令牌。JSON 或被重定向的 token create 必须提供 `--out`；真实交互终端仍可一次性显示令牌。

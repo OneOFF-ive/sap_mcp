@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -148,6 +148,40 @@ test('occupied ports fail without takeover; external owners and orphan guards ar
   } finally {
     await release?.();
     await new Promise<void>(resolve => occupied.close(() => resolve()));
+    await f.cleanup();
+  }
+});
+
+test('authenticated GUI shutdown drains the admin process and releases its runtime lease', async () => {
+  const f = await fixture();
+  const port = await freePort();
+  const child = spawn(process.execPath, [resolve('dist/cli.js'), 'ui', '--no-open', '--port', String(port)], {
+    env: f.env, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']
+  });
+  let session: URL | undefined;
+  try {
+    session = await new Promise<URL>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('GUI test startup timed out')), 20000);
+      let output = '';
+      child.stdout!.on('data', chunk => {
+        output += chunk.toString();
+        const match = output.match(/Management session URL: (http:\/\/127\.0\.0\.1:[0-9]+\/#[A-Za-z0-9_-]+)/);
+        if (match) { clearTimeout(timer); resolve(new URL(match[1])); }
+      });
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+    });
+    const lease = await inspectLease(f.directory);
+    assert.equal(lease.state, 'running');
+    assert.equal((await fetch(`${session.origin}/api/application/stop`, { method: 'POST' })).status, 401);
+    const exited = new Promise<number | null>(resolve => child.once('exit', resolve));
+    const response = await fetch(`${session.origin}/api/application/stop`, { method: 'POST',
+      headers: { Origin: session.origin, 'X-Admin-Token': session.hash.slice(1) } });
+    assert.equal(response.status, 200);
+    assert.equal(await exited, 0);
+    assert.equal((await inspectLease(f.directory)).state, 'missing');
+  } finally {
+    // This is only our isolated test process, never a user's service.
+    if (child.exitCode === null) child.kill();
     await f.cleanup();
   }
 });

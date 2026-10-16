@@ -16,11 +16,15 @@ Windows 本地 Web 管理界面 + Streamable HTTP MCP 服务，通过 HTTP ADT �
 
 ## 环境与安装
 
-- Windows、Node.js 22 或更新版本、npm。
+- Windows 10（1809 或更新）/ Windows 11，64 位。
 - SAP 系统启用 ADT，可访问 HTTP/HTTPS 地址，具备相应开发权限；推荐使用证书可信的 HTTPS。
 - 密码保存在当前 Windows 用户的凭据管理器；不用聊天或命令行参数传递密码。
 
-在项目目录执行：
+普通用户运行 `SAPMCP-版本-win-x64-setup.exe`；ARM 电脑选择 `arm64` 安装包。安装包内置 Node.js、原生模块和运行库，无需另外安装 Node.js、npm 或下载源码。默认安装到当前用户目录，并添加 `sapmcp` 命令、桌面和开始菜单快捷方式。
+
+安装后重新打开终端，在任意目录执行 `sapmcp --help`。双击桌面 **SAP MCP** 打开浏览器中的图形管理界面；右下角托盘图标可重新打开页面或正常退出。完整安装、升级、卸载及构建说明见 [Windows 安装包](docs/windows-installer.md)。
+
+开发者从源码使用时，需要 Node.js 22+ 和 npm，在项目目录执行：
 
 ```powershell
 npm ci --ignore-scripts
@@ -30,7 +34,7 @@ npm start -- --help
 
 项目使用 PowerShell 执行 npm 脚本，支持 UNC 共享目录。上述安装命令禁用依赖生命周期脚本。
 
-以下示例直接使用 `npm`，命令需在项目目录中执行。
+以下源码示例使用 `npm`，命令需在项目目录中执行。安装包用户将 `npm start --` 替换为 `sapmcp` 即可在任意目录使用。
 
 ## 图形界面启动
 

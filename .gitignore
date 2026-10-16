@@ -3,3 +3,4 @@ dist/
 .sap-mcp/
 *.log
 coverage/
+outputs/installers/

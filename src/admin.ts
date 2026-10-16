@@ -27,7 +27,8 @@ function validationResponse(error: z.ZodError) {
   return { code: 'INVALID_INPUT', message, fields };
 }
 
-export async function startAdmin(store: ConfigStore, credentials: Credentials, port = 8766, factory: BackendFactory = (c, p) => new AdtBackend(c, p)) {
+export async function startAdmin(store: ConfigStore, credentials: Credentials, port = 8766,
+  factory: BackendFactory = (c, p) => new AdtBackend(c, p), requestExit?: () => Promise<void>) {
   const key = randomBytes(32).toString('base64url');
   const app = express();
   app.disable('x-powered-by');
@@ -254,6 +255,11 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
     });
     res.json({ success: true });
   });
+  app.post('/api/application/stop', (_req, res) => {
+    res.json({ success: true });
+    // Respond first, then drain MCP/admin requests and release the CLI runtime lease.
+    setImmediate(() => { void (requestExit ? requestExit() : close()).catch(() => { process.exitCode = 1; }); });
+  });
   const assets = fileURLToPath(new URL('../web/', import.meta.url));
   app.get('/icons.js', (_req, res) => res.sendFile(fileURLToPath(new URL('../node_modules/lucide/dist/umd/lucide.js', import.meta.url))));
   app.use(express.static(assets, { etag: false }));
@@ -278,18 +284,18 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
   listener.headersTimeout = 10000;
   const address = listener.address();
   const actualPort = address && typeof address !== 'string' ? address.port : port;
+  let shutdown: Promise<void> | undefined;
+  const close = () => shutdown ??= (async () => {
+    closing = true;
+    const stopped = new Promise<void>(resolve => listener.close(() => resolve()));
+    while (busy) await new Promise(resolve => setTimeout(resolve, 50));
+    if (runtime) await runtime.close();
+    listener.closeIdleConnections();
+    await stopped;
+  })();
   return {
     listener,
     url: `http://127.0.0.1:${actualPort}/#${key}`,
-    close: async () => {
-      closing = true;
-      const stopped = new Promise<void>(resolve => listener.close(() => resolve()));
-      while (busy)
-        await new Promise(resolve => setTimeout(resolve, 50));
-      if (runtime)
-        await runtime.close();
-      listener.closeIdleConnections();
-      await stopped;
-    }
+    close
   };
 }
