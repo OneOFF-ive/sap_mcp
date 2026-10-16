@@ -1,5 +1,13 @@
 # Security Notes
 
+## AI lifecycle CLI (2026-10-16)
+
+The lifecycle manager serializes its commands with a separate lease and uses the existing runtime/config leases. Read-only lease inspection never reclaims locks. A managed instance is identified by PID, process start time via its runtime lease, a lease nonce and an authenticated control response. Stop uses a dedicated loopback control listener, requires a separate random token, rejects Origin and unexpected Host, and never kills a PID. This listener is not exposed as an MCP tool. Its metadata file contains a control secret and must remain private to the current OS user; mode 0600 is requested, and Windows access control still depends on directory ACLs. Treat custom configuration directories as sensitive.
+
+JSON CLI output excludes credentials and control tokens. `token create --out` and `client-config --out` create new local secret files without overwriting; do not commit, share or print them. Status/doctor do not return their contents. A Windows password dialog sends input only through an internal process pipe to the credential-store writer, never through CLI options or environment variables. A changed login identity requires fresh password entry. Client instructions alone cannot constrain a terminal-capable AI: that client still acts with the local user's OS permissions.
+
+Background startup includes a TCP listener preflight and still handles actual bind failures; this is not an atomic port reservation. Shutdown waits for normal request/session cleanup. Timeout means uncertainty, not permission to force-kill or retry writes. Background mode does not install an OS service or guarantee crash/reboot recovery. Existing foreground service/UI instances remain outside managed stop/restart.
+
 ## Review and fixes (2026-10-15)
 
 The local management API authentication guard now matches paths case-insensitively, consistent with Express routing. Previously uppercase paths such as `/API/state` bypassed the lowercase `/api/` middleware check; management mutations including token creation could also bypass that guard. Regression tests enforce authentication and same-origin checks across mixed-case paths. Restart all old processes to apply the fix; it is not a change to already running services.

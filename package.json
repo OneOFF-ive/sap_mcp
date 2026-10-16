@@ -11,6 +11,7 @@
     "build": "node node_modules/typescript/bin/tsc",
     "start": "node dist/cli.js",
     "dev": "node --import tsx src/cli.ts",
+    "pretest": "npm run build",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "engines": {

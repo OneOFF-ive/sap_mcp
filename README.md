@@ -54,6 +54,8 @@ npm start -- ui
 
 ## CLI 配置与启动
 
+支持具备本机终端能力的 AI 客户端管理服务：`node dist/cli.js status --json`、`doctor --json`、`service start/stop/restart --json`。连接命令提供非交互参数与本机密码窗口，令牌可通过 `--out` 写入本地文件；配套管理 skill 和完整说明见 [AI 终端管理](docs/ai-management.md)。后台模式只管理自身创建的实例，不强杀前台 UI 或其他进程。
+
 ```powershell
 npm start -- connection add <连接名称>
 npm start -- connection list

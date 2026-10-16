@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { access, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -23,6 +23,33 @@ async function guarded<T>(path: string, action: () => Promise<T>): Promise<T> {
 }
 export type LeaseOwner = { started_at: string; command_line: string };
 type Inspector = (pid: number) => Promise<LeaseOwner | null>;
+
+export type LeaseStatus = {
+  state: 'missing' | 'running' | 'stale' | 'unknown';
+  guard_present: boolean;
+  pid?: number;
+  nonce?: string;
+};
+
+// Read-only inspection: diagnostics must never reclaim locks or orphan guards.
+export async function inspectLease(directory: string, filename = 'runtime.lock', inspect: Inspector = inspectOwner): Promise<LeaseStatus> {
+  const path = join(directory, filename);
+  const guardPresent = await access(`${path}.guard`).then(() => true, () => false);
+  try {
+    const record = JSON.parse(await readFile(path, 'utf8')) as number | { pid: number; started_at: string; nonce?: string };
+    const pid = typeof record === 'number' ? record : record.pid;
+    if (!Number.isInteger(pid) || pid <= 0) return { state: 'unknown', guard_present: guardPresent };
+    const owner = await inspect(pid);
+    const sameProcess = owner && (typeof record === 'number'
+      ? process.platform !== 'win32' || /(?:sap_mcp[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)/i.test(owner.command_line)
+      : record.started_at === owner.started_at);
+    return { state: sameProcess ? 'running' : 'stale', guard_present: guardPresent, pid,
+      ...(typeof record !== 'number' && record.nonce ? { nonce: record.nonce } : {}) };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unknown', guard_present: guardPresent };
+  }
+}
+
 async function inspectOwner(pid: number): Promise<LeaseOwner | null> {
   if (process.platform !== 'win32') {
     try { process.kill(pid, 0); return { started_at: 'unknown', command_line: 'unknown' }; }
@@ -50,7 +77,7 @@ async function acquireRecord(path: string, inspect: Inspector) {
     const sameProcess = owner && (typeof record === 'number'
       ? process.platform !== 'win32' || /(?:sap_mcp[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)/i.test(owner.command_line)
       : record.started_at === owner.started_at);
-    if (sameProcess) throw new Error(`SAP MCP service or configuration command is running (PID ${pid}). Close it before starting another instance.`);
+    if (sameProcess) throw new AppError('SERVICE_RUNNING', `SAP MCP service or configuration command is running (PID ${pid}). Close it before starting another instance.`);
     await unlink(path);
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const owner = await inspect(process.pid);
