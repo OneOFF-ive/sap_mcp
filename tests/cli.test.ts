@@ -10,11 +10,22 @@ import { ConfigStore, connectionSchema } from '../src/config.js';
 import { acquireLease, inspectLease } from '../src/lease.js';
 
 const execute = promisify(execFile);
+
+test('SapLink CLI exposes the renamed command and package entry', async () => {
+  const manifest = JSON.parse(await readFile(resolve('package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(resolve('package-lock.json'), 'utf8'));
+  assert.deepEqual(manifest.bin, { saplink: 'dist/cli.js' });
+  assert.deepEqual(lock.packages[''].bin, manifest.bin);
+  const help = await execute(process.execPath, [resolve('dist/cli.js'), '--help'], { encoding: 'utf8' });
+  assert.match(help.stdout, /Usage: saplink\b/);
+  assert.equal(help.stderr, '');
+});
+
 async function fixture() {
-  const root = join(process.cwd(), '.sap-mcp', 'tests');
+  const root = join(process.cwd(), '.saplink', 'tests');
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'cli-'));
-  const env = { ...process.env, SAP_MCP_CONFIG_DIR: directory, SAP_MCP_LOG_DIR: join(directory, 'logs') };
+  const env = { ...process.env, SAPLINK_CONFIG_DIR: directory, SAPLINK_LOG_DIR: join(directory, 'logs') };
   const run = async (...args: string[]) => {
     let stdout: string; let stderr: string; let code = 0;
     try {

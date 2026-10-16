@@ -1,0 +1,64 @@
+# SapLink 开发与构建指南
+
+本指南面向修改源码、运行测试和制作安装包的开发者。普通用户请阅读 [Windows 安装指南](windows-installer.md)；已安装应用的日常操作统一使用 [运维手册](operations.md) 中的 `saplink` 命令。
+
+## 从源码运行
+
+需要 Windows、Node.js 22+ 和 npm。在项目根目录的 PowerShell 执行：
+
+```powershell
+npm ci --ignore-scripts
+npm run build
+node dist/cli.js --help
+```
+
+这些是源码开发命令，不是安装包用户的前置步骤。后续源码 CLI 调用统一使用 `node dist/cli.js`，例如：
+
+```powershell
+node dist/cli.js ui
+node dist/cli.js status --json
+node dist/cli.js doctor --json
+```
+
+`node dist/cli.js ui` 在前台运行，保持终端开启，用 Ctrl+C 正常退出；关闭浏览器不会结束进程。`start-ui.cmd` 是源码目录的便捷入口。源码与已安装应用默认共用用户配置目录，不要同时启动；需要隔离测试时使用专用 `SAPLINK_CONFIG_DIR` 和 `SAPLINK_LOG_DIR`。
+
+运维手册中的 `saplink <参数>` 对应项目目录内的 `node dist/cli.js <参数>`。`npm start -- <参数>` 也是项目脚本入口，但不用于用户运维示例；自动化优先直接运行 Node CLI，避免 npm 附加输出影响 JSON 解析。
+
+## 测试与接口维护
+
+```powershell
+npm run build
+npm test
+```
+
+自动化测试主要使用模拟 SAP，不等于真实系统验收。可选浏览器检查及工具实现细节见 [技术参考](technical-reference.md)。
+
+工具 schema 和描述位于 `src/tool-definitions.ts`，注册位于 `src/server.ts`，业务行为位于 `src/operations.ts`。写操作分类集中在 `src/tool-policy.ts`，MCP annotations 与业务层写保护共用该集合；初始化客户端指引位于 `src/client-guidance.ts`。修改接口时同步核对客户端手册示例。
+
+架构与模块职责见 [架构文档](architecture.md)，源码接口与历史实现细节见 [技术参考](technical-reference.md)。
+
+## Windows 安装包构建与验证
+
+程序图标原图保存在 `packaging/windows/assets/app-icon.png`。构建会从原图生成 16、24、32、48、64、128、256 像素的 Windows ICO，并写入启动器、安装程序及卸载程序。托盘直接读取安装目录的 `saplink.ico`；快捷方式和应用列表明确引用带内容哈希的 `saplink-<hash>.ico`，安装后通知 Windows 刷新图标。管理页面引用 `web/app-icon-<hash>.png` 作为侧栏标识及浏览器图标；更换原图时文件名随内容变化，避免继续命中旧缓存。`web/app-icon.png` 保留为兼容资源，构建时同步生成并自动更新页面引用。
+
+在 Windows 项目目录先执行 `npm ci --ignore-scripts`，然后执行 `npm run package:windows`。构建需要 Node.js/npm、Windows 自带的 .NET Framework C# 编译器和 PowerShell 5.1。首次构建需要联网；用户安装生成的包时无需联网。
+
+构建会运行测试，下载 `packaging/windows/download-lock.json` 固定 SHA256 的 Node.js、NSIS 和微软 VC 运行库，并验证微软运行库及所选 DLL 的有效微软签名。VC 包只作为 CAB 数据解包，不执行其安装程序，不安装全局组件。发布时更新版本与下载锁，不关闭哈希校验。微软动态下载 URL 如果变更，构建会拒绝新哈希，需显式审核并更新锁文件。
+
+```powershell
+npm run package:windows
+# 只构建一个处理器版本（已完成测试时可用 -SkipTests）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build.ps1 -Architecture x64
+# 在本机可运行对应架构时验证安装、命令、升级与卸载
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/smoke-test.ps1 -Architecture x64
+# 单独验证安装前检查：失效锁、PID 复用、活动锁、门锁与损坏锁
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/preflight-test.ps1
+# 验证隐藏依赖、点文件、空目录清理，以及未知文件保留和路径边界
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/payload-test.ps1
+```
+
+发布产物在 `outputs/installers`，每种架构只生成一个标准名称安装包及对应 `.sha256`，不再生成图标后缀副本。公开分发的文件保持版本唯一；更换图标或程序后更新版本号，避免覆盖同版本文件引起缓存混淆。安装包只包含明确选定的应用文件和生产依赖；源码、测试、本地连接配置、凭据、缓存均不打包。第三方许可随包提供：Node 位于 `runtime/LICENSE`，VC 运行库与 NSIS 位于 `licenses`，依赖许可位于各 `app/node_modules` 包中。
+
+测试安装包单独输出到 `.saplink/installer-build/tests`，不进入发布目录。隔离安装测试使用专用临时目录和 `HKCU\Software\SapLinkInstallerTest`，不修改真实用户 PATH 或桌面；测试快捷方式放在测试安装目录内。测试会保留临时文件用于排错，不应将 `-test-setup.exe` 作为发行包分发。不同架构的测试依次执行，因为它们使用同一个测试注册表位置。
+
+构建包含目标 Node 与原生凭据模块的执行检查。x64 Windows 不能执行 ARM64 检查，因此在 x64 构建机选择 `-Architecture x64`，ARM64 产物在 ARM64 构建机生成。ARM64 Windows 11 可以在支持 x64 模拟的环境生成并检查两个版本。

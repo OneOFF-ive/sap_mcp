@@ -12,7 +12,7 @@ async function guarded<T>(path: string, action: () => Promise<T>): Promise<T> {
   try { guard = await open(guardPath, 'wx', 0o600); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new AppError('LEASE_BUSY', `Lease guard is busy: ${guardPath}. 请等待其他命令结束后重试；若进程曾崩溃，须先关闭并核实所有 SAP MCP 进程，再人工删除此门锁文件 (manually remove)。门锁不会自动回收。`);
+      throw new AppError('LEASE_BUSY', `Lease guard is busy: ${guardPath}. 请等待其他命令结束后重试；若进程曾崩溃，须先关闭并核实所有 SapLink 进程，再人工删除此门锁文件 (manually remove)。门锁不会自动回收。`);
     }
     throw error;
   }
@@ -41,7 +41,7 @@ export async function inspectLease(directory: string, filename = 'runtime.lock',
     if (!Number.isInteger(pid) || pid <= 0) return { state: 'unknown', guard_present: guardPresent };
     const owner = await inspect(pid);
     const sameProcess = owner && (typeof record === 'number'
-      ? process.platform !== 'win32' || /(?:sap_mcp[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)/i.test(owner.command_line)
+      ? process.platform !== 'win32' || /(?:saplink[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)/i.test(owner.command_line)
       : record.started_at === owner.started_at);
     return { state: sameProcess ? 'running' : 'stale', guard_present: guardPresent, pid,
       ...(typeof record !== 'number' && record.nonce ? { nonce: record.nonce } : {}) };
@@ -75,9 +75,9 @@ async function acquireRecord(path: string, inspect: Inspector) {
     if (!Number.isInteger(pid) || pid <= 0) throw new Error('Invalid lock file');
     const owner = await inspect(pid);
     const sameProcess = owner && (typeof record === 'number'
-      ? process.platform !== 'win32' || /(?:sap_mcp[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)/i.test(owner.command_line)
+      ? process.platform !== 'win32' || /(?:saplink[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)/i.test(owner.command_line)
       : record.started_at === owner.started_at);
-    if (sameProcess) throw new AppError('SERVICE_RUNNING', `SAP MCP service or configuration command is running (PID ${pid}). Close it before starting another instance.`);
+    if (sameProcess) throw new AppError('SERVICE_RUNNING', `SapLink service or configuration command is running (PID ${pid}). Close it before starting another instance.`);
     await unlink(path);
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const owner = await inspect(process.pid);

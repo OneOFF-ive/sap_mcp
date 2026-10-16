@@ -9,7 +9,7 @@ assert(process.report.getReport().sharedObjects.some(file =>
   canonical(file).startsWith(prefix) && path.basename(file).toLowerCase() === 'vcruntime140.dll'),
 'Credential module must load the bundled VC runtime');
 // Exercise the actual credential API under a unique throwaway test identity.
-const entry = new Entry('SAPMCP.Installer.BuildTest', crypto.randomUUID());
+const entry = new Entry('SapLink.Installer.BuildTest', crypto.randomUUID());
 const secret = crypto.randomBytes(32).toString('hex');
 try {
   entry.setPassword(secret);

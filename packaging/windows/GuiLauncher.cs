@@ -107,10 +107,10 @@ internal sealed class GuiContext : ApplicationContext
         menu.ShowImageMargin = false;
         menu.Opening += delegate { TrayMenuTheme.Apply(menu); };
         menu.Items.Add("打开管理界面", null, delegate { OpenBrowser(); });
-        exitItem = new ToolStripMenuItem("退出 SAP MCP 管理", null, delegate { Stop(); });
+        exitItem = new ToolStripMenuItem("退出 SapLink 管理", null, delegate { Stop(); });
         menu.Items.Add(exitItem);
         // Read the packaged artwork directly instead of asking the shell icon cache.
-        tray = new NotifyIcon { Text = "SAP MCP 管理", Icon = new Icon(Path.Combine(Launcher.Root, "sapmcp.ico"), 32, 32), ContextMenuStrip = menu, Visible = true };
+        tray = new NotifyIcon { Text = "SapLink 管理", Icon = new Icon(Path.Combine(Launcher.Root, "saplink.ico"), 32, 32), ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += delegate { OpenBrowser(); };
         var start = Launcher.Node(new[] { "ui", "--no-open" });
         start.CreateNoWindow = true;
@@ -136,7 +136,7 @@ internal sealed class GuiContext : ApplicationContext
             if (child.HasExited)
             {
                 if (child.ExitCode != 0 && !stopping)
-                    MessageBox.Show("管理界面未能启动。请先关闭已有的管理进程，或运行 sapmcp doctor --json 检查。后台 MCP 服务可用 sapmcp service stop --json 正常停止。", "SAP MCP", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("管理界面未能启动。请先关闭已有的管理进程，或运行 saplink doctor --json 检查。后台 MCP 服务可用 saplink service stop --json 正常停止。", "SapLink", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 timer.Stop(); tray.Dispose(); child.Dispose(); ExitThread(); return;
             }
             if ((!opened || reopen.WaitOne(0)) && session != null) { opened = true; OpenBrowser(); }
@@ -149,7 +149,7 @@ internal sealed class GuiContext : ApplicationContext
     {
         if (session == null || stopping) return;
         try { Process.Start(new ProcessStartInfo(session.AbsoluteUri) { UseShellExecute = true }); }
-        catch { MessageBox.Show("无法打开默认浏览器。请检查 Windows 默认浏览器设置。", "SAP MCP"); }
+        catch { MessageBox.Show("无法打开默认浏览器。请检查 Windows 默认浏览器设置。", "SapLink"); }
     }
 
     private void Stop()
@@ -170,7 +170,7 @@ internal sealed class GuiContext : ApplicationContext
             catch
             {
                 stopping = false;
-                MessageBox.Show("未能确认退出请求，请稍后重试。现有进程没有被强制结束。", "SAP MCP");
+                MessageBox.Show("未能确认退出请求，请稍后重试。现有进程没有被强制结束。", "SapLink");
             }
         });
     }
@@ -184,8 +184,8 @@ internal static class GuiProgram
         string identity;
         using (var hash = SHA256.Create()) identity = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(Launcher.Root.ToUpperInvariant()))).Replace("-", "");
         bool first;
-        using (var mutex = new Mutex(true, "Local\\SAPMCP.GUI." + identity, out first))
-        using (var reopen = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\SAPMCP.GUI.Open." + identity))
+        using (var mutex = new Mutex(true, "Local\\SapLink.GUI." + identity, out first))
+        using (var reopen = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\SapLink.GUI.Open." + identity))
         {
             if (!first) { reopen.Set(); return; }
             try
@@ -193,7 +193,7 @@ internal static class GuiProgram
                 Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new GuiContext(reopen));
             }
-            catch { MessageBox.Show("SAP MCP 无法启动，请修复安装或运行 sapmcp doctor --json 检查。", "SAP MCP"); }
+            catch { MessageBox.Show("SapLink 无法启动，请修复安装或运行 saplink doctor --json 检查。", "SapLink"); }
             finally { mutex.ReleaseMutex(); }
         }
     }

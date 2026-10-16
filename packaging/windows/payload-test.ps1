@@ -1,9 +1,9 @@
 param()
 $ErrorActionPreference = 'Stop'
-$testRoot = Join-Path $env:TEMP ('SAPMCP Payload Test ' + [Guid]::NewGuid().ToString('N'))
+$testRoot = Join-Path $env:TEMP ('SapLink Payload Test ' + [Guid]::NewGuid().ToString('N'))
 $helper = Join-Path $PSScriptRoot 'installer-control.ps1'
 New-Item -ItemType Directory -Path $testRoot | Out-Null
-foreach ($scenario in @('complete','preserve-unknown','legacy','unsafe-directory')) {
+foreach ($scenario in @('complete','preserve-unknown','unsafe-directory')) {
   $install = Join-Path $testRoot $scenario
   $package = Join-Path $install 'app\node_modules\sample'
   New-Item -ItemType Directory -Path (Join-Path $package '.github'),(Join-Path $package 'empty') -Force | Out-Null
@@ -15,12 +15,7 @@ foreach ($scenario in @('complete','preserve-unknown','legacy','unsafe-directory
   (Get-Item -LiteralPath (Join-Path $package '.package-lock.json') -Force).Attributes = [IO.FileAttributes]::Hidden
   $files = @(Get-ChildItem -LiteralPath $install -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($install.Length + 1) })
   $directories = @(Get-ChildItem -LiteralPath $install -Recurse -Directory -Force | ForEach-Object { $_.FullName.Substring($install.Length + 1) })
-  $manifest = @{schema_version=1;app_id='org.sapmcp.desktop';files=$files;directories=$directories}
-  if ($scenario -eq 'legacy') {
-    $manifest.Remove('directories')
-    # Legacy manifests cannot own empty directories, so omit that fixture.
-    [IO.Directory]::Delete((Join-Path $package 'empty'))
-  }
+  $manifest = @{schema_version=1;app_id='org.saplink.desktop';files=$files;directories=$directories}
   if ($scenario -eq 'unsafe-directory') { $manifest.directories += '..\outside' }
   $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $install 'install-manifest.json') -Encoding UTF8
   if ($scenario -eq 'preserve-unknown') { Set-Content -LiteralPath (Join-Path $package 'user-notes.txt') -Value 'keep' }

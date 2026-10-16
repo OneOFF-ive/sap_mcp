@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.saplink/
 .sap-mcp/
 *.log
 coverage/

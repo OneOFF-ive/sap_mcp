@@ -1,34 +1,34 @@
 ﻿param([ValidateSet('x64','arm64')][string]$Architecture = 'arm64')
 $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-$stage = Join-Path $repository ('.sap-mcp\installer-build\stage-' + $Architecture)
-$compiler = Join-Path $repository '.sap-mcp\installer-cache\nsis-3.12\makensis.exe'
+$stage = Join-Path $repository ('.saplink\installer-build\stage-' + $Architecture)
+$compiler = Join-Path $repository '.saplink\installer-cache\nsis-3.12\makensis.exe'
 $version = (Get-Content (Join-Path $repository 'package.json') -Raw | ConvertFrom-Json).version
-$testOutput = Join-Path $repository '.sap-mcp\installer-build\tests'
+$testOutput = Join-Path $repository '.saplink\installer-build\tests'
 New-Item -ItemType Directory -Path $testOutput -Force | Out-Null
-$installer = Join-Path $testOutput "SAPMCP-$version-win-$Architecture-test-setup.exe"
-$iconName = 'sapmcp-' + (Get-FileHash -LiteralPath (Join-Path $stage 'sapmcp.ico')).Hash.Substring(0,12).ToLowerInvariant() + '.ico'
+$installer = Join-Path $testOutput "SapLink-$version-win-$Architecture-test-setup.exe"
+$iconName = 'saplink-' + (Get-FileHash -LiteralPath (Join-Path $stage 'saplink.ico')).Hash.Substring(0,12).ToLowerInvariant() + '.ico'
 & $compiler /V2 /INPUTCHARSET UTF8 "/DAPP_VERSION=$version" "/DTARGET_ARCH=$Architecture" "/DSTAGE_DIR=$stage" "/DOUTPUT_FILE=$installer" "/DICON_FILENAME=$iconName" /DTEST_MODE (Join-Path $PSScriptRoot 'installer.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Test installer compilation failed.' }
 
-$testRoot = Join-Path $env:TEMP ('SAPMCP Installer Test ' + [Guid]::NewGuid().ToString('N'))
+$testRoot = Join-Path $env:TEMP ('SapLink Installer Test ' + [Guid]::NewGuid().ToString('N'))
 $install = Join-Path $testRoot '安装目录 with spaces'
 $config = Join-Path $testRoot 'private-config'
 $working = Join-Path $testRoot 'unrelated terminal directory'
-$keyName = 'Software\SAPMCPInstallerTest'
+$keyName = 'Software\SapLinkInstallerTest'
 $registry = [Microsoft.Win32.Registry]::CurrentUser
 if ($registry.OpenSubKey($keyName)) { throw 'Installer test registry already exists; preserve it for inspection before rerunning.' }
 $actualEnvironment = $registry.OpenSubKey('Environment')
 $actualPath = $actualEnvironment.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 $actualEnvironment.Dispose()
 $oldPath = $env:Path
-$oldConfig = $env:SAP_MCP_CONFIG_DIR
-$oldLogs = $env:SAP_MCP_LOG_DIR
+$oldConfig = $env:SAPLINK_CONFIG_DIR
+$oldLogs = $env:SAPLINK_LOG_DIR
 New-Item -ItemType Directory -Path $config,$working -Force | Out-Null
 Copy-Item -LiteralPath $installer -Destination (Join-Path $testRoot 'installer.exe')
 $installer = Join-Path $testRoot 'installer.exe'
-$env:SAP_MCP_CONFIG_DIR = $config
-$env:SAP_MCP_LOG_DIR = Join-Path $testRoot 'logs'
+$env:SAPLINK_CONFIG_DIR = $config
+$env:SAPLINK_LOG_DIR = Join-Path $testRoot 'logs'
 $originalTestPath = '%USERPROFILE%\Existing Tool;C:\Unrelated'
 $environment = $registry.CreateSubKey($keyName + '\Environment')
 $environment.SetValue('Path', $originalTestPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
@@ -41,7 +41,7 @@ function Run-Installer([string]$Directory = $install) {
 }
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
 function Cli-Json([string[]]$Arguments) {
-  $text = & (Join-Path $install 'bin\sapmcp.exe') @Arguments --json
+  $text = & (Join-Path $install 'bin\saplink.exe') @Arguments --json
   if ($LASTEXITCODE -ne 0) { throw 'Installed CLI command failed.' }
   return ($text | ConvertFrom-Json)
 }
@@ -67,16 +67,16 @@ try {
   Assert-True ($environment.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) 'PATH registry value type changed.'
   $environment.Dispose()
   $shell = New-Object -ComObject WScript.Shell
-  foreach ($link in @('test-shortcuts\Desktop\SAP MCP.lnk','test-shortcuts\Start Menu\SAP MCP\SAP MCP 管理界面.lnk')) {
+  foreach ($link in @('test-shortcuts\Desktop\SapLink.lnk','test-shortcuts\Start Menu\SapLink\SapLink 管理界面.lnk')) {
     $shortcut = $shell.CreateShortcut((Join-Path $install $link))
-    Assert-True ($shortcut.TargetPath -eq (Join-Path $install 'bin\sapmcp-gui.exe')) 'GUI shortcut target is incorrect.'
+    Assert-True ($shortcut.TargetPath -eq (Join-Path $install 'bin\saplink-gui.exe')) 'GUI shortcut target is incorrect.'
     Assert-True ($shortcut.IconLocation -eq ((Join-Path $install $iconName) + ',0')) 'Shortcut does not use the content-addressed icon.'
   }
   $env:Path = (Join-Path $install 'bin') + ';' + $oldPath
   Push-Location $working
   try {
-    Assert-True ((Get-Command sapmcp).Source -eq (Join-Path $install 'bin\sapmcp.exe')) 'Command did not resolve from an unrelated directory.'
-    $reportedVersion = & sapmcp --version
+    Assert-True ((Get-Command saplink).Source -eq (Join-Path $install 'bin\saplink.exe')) 'Command did not resolve from an unrelated directory.'
+    $reportedVersion = & saplink --version
     Assert-True ($reportedVersion -eq $version) 'Installed launcher reported the wrong version.'
     $state = Cli-Json @('status')
     Assert-True ($state.data.service.state -eq 'stopped') 'Unexpected service state in isolated configuration.'
@@ -113,7 +113,7 @@ try {
   Start-Process -FilePath $uninstaller -ArgumentList '/S' -WindowStyle Hidden -Wait | Out-Null
   $deadline = [DateTime]::UtcNow.AddSeconds(40)
   while (((Test-Path -LiteralPath (Join-Path $install 'install-manifest.json')) -or (Test-Path -LiteralPath $uninstaller)) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
-  Assert-True (!(Test-Path -LiteralPath (Join-Path $install 'bin\sapmcp.exe'))) 'Uninstall left the launcher installed.'
+  Assert-True (!(Test-Path -LiteralPath (Join-Path $install 'bin\saplink.exe'))) 'Uninstall left the launcher installed.'
   Assert-True (!(Test-Path -LiteralPath (Join-Path $install 'app'))) 'Uninstall left application dependencies, dotfiles or empty directories.'
   Assert-True (!(Test-Path -LiteralPath (Join-Path $install 'runtime'))) 'Uninstall left the bundled runtime directory.'
   Assert-True (Test-Path -LiteralPath (Join-Path $install 'keep-user-file.txt')) 'Uninstall removed an unknown file.'
@@ -126,12 +126,12 @@ try {
   $actualEnvironment.Dispose()
   Write-Host "Installer smoke checks passed ($Architecture): offline install, shortcuts, PATH, arbitrary working directory, native CLI, background lifecycle, upgrade guard, configuration preservation, uninstall."
 } finally {
-  if (Test-Path -LiteralPath (Join-Path $install 'bin\sapmcp.exe')) {
-    & (Join-Path $install 'bin\sapmcp.exe') service stop --json | Out-Null
+  if (Test-Path -LiteralPath (Join-Path $install 'bin\saplink.exe')) {
+    & (Join-Path $install 'bin\saplink.exe') service stop --json | Out-Null
   }
   $env:Path = $oldPath
-  $env:SAP_MCP_CONFIG_DIR = $oldConfig
-  $env:SAP_MCP_LOG_DIR = $oldLogs
+  $env:SAPLINK_CONFIG_DIR = $oldConfig
+  $env:SAPLINK_LOG_DIR = $oldLogs
   # Isolated files intentionally remain in TEMP for failure inspection.
   if (!(Test-Path -LiteralPath (Join-Path $install 'install-manifest.json'))) { $registry.DeleteSubKeyTree($keyName, $false) }
 }

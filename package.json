@@ -1,12 +1,11 @@
 {
-  "name": "sap-mcp",
+  "name": "saplink",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Local HTTP MCP server for SAP ABAP development",
   "bin": {
-    "sapmcp": "dist/cli.js",
-    "sap-mcp": "dist/cli.js"
+    "saplink": "dist/cli.js"
   },
   "scripts": {
     "build": "node node_modules/typescript/bin/tsc",

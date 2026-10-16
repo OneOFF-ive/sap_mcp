@@ -64,7 +64,7 @@ export async function doctor(store: ConfigStore, credentials: Credentials, port:
     service = await serviceStatus(store.directory);
     const uncertain = ['unknown', 'unresponsive'].includes(service.state) || service.lease.guard_present;
     add('service', uncertain ? 'failed' : 'passed', `Service state: ${service.state}. Foreground UI/service instances are never terminated by the manager.`);
-    if (service.lease.guard_present) add('runtime_guard', 'failed', 'An orphan or busy runtime guard exists. Do not delete it without checking all running SAP MCP processes.');
+    if (service.lease.guard_present) add('runtime_guard', 'failed', 'An orphan or busy runtime guard exists. Do not delete it without checking all running SapLink processes.');
     if (service.state === 'stopped') add('port', await portAvailable(port) ? 'passed' : 'failed', `Checking local port ${port}; a busy port is never taken over.`);
   } catch (error) { add('service', 'failed', cliFailure(error).message); }
 

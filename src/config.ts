@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { defaultConfigDirectory } from './paths.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from './errors.js';
@@ -58,7 +58,7 @@ export function normalizeUrl(value: string): string {
 export const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
 export class ConfigStore {
-  constructor(public directory = process.env.SAP_MCP_CONFIG_DIR ?? join(process.env.APPDATA ?? homedir(), 'sap-mcp')) { }
+  constructor(public directory = defaultConfigDirectory()) { }
 
   async load(): Promise<Config> {
     try {
@@ -125,7 +125,7 @@ export class WindowsCredentials implements Credentials {
     if (process.platform !== 'win32')
       throw new Error('Windows Credential Manager is required');
     const { Entry } = await import('@napi-rs/keyring');
-    return new Entry('sap-mcp', id);
+    return new Entry('saplink', id);
   }
 
   async get(id: string) {

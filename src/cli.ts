@@ -23,7 +23,7 @@ const store = new ConfigStore();
 const credentials = new WindowsCredentials();
 const jsonOutput = process.argv.includes('--json');
 const appVersion: string = createRequire(import.meta.url)('../package.json').version;
-const cli = new Command().name('sapmcp').description('Local SAP ADT MCP server and lifecycle manager')
+const cli = new Command().name('saplink').description('SapLink: local SAP ADT MCP server and lifecycle manager')
   .version(appVersion).option('--json', 'Return one JSON result; never prompt in the terminal')
   .exitOverride().configureOutput({ writeErr: text => { if (!jsonOutput) process.stderr.write(text); } });
 
@@ -274,11 +274,11 @@ cli.command('ui').description('Open the interactive local management interface')
     const stop = async () => { if (closing) return; closing = true; try { await runtime?.close(); } finally { await release(); } };
     try {
       runtime = await startAdmin(store, credentials, port, undefined, stop);
-      console.log(`SAP MCP management: http://127.0.0.1:${port}/`);
+      console.log(`SapLink management: http://127.0.0.1:${port}/`);
       if (options.open && process.platform === 'win32') {
         const browser = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-          "$ErrorActionPreference = 'Stop'; Start-Process -FilePath $env:SAP_MCP_BROWSER_URL"],
-          { windowsHide: true, cwd: process.env.SystemRoot ?? 'C:\\Windows', stdio: 'ignore', env: { ...process.env, SAP_MCP_BROWSER_URL: runtime.url } });
+          "$ErrorActionPreference = 'Stop'; Start-Process -FilePath $env:SAPLINK_BROWSER_URL"],
+          { windowsHide: true, cwd: process.env.SystemRoot ?? 'C:\\Windows', stdio: 'ignore', env: { ...process.env, SAPLINK_BROWSER_URL: runtime.url } });
         browser.on('error', () => console.error('Browser launch failed; use the local session URL.'));
       }
       process.once('SIGINT', () => { void stop(); });
@@ -294,7 +294,7 @@ cli.command('serve').description('Run MCP in the foreground; use service start f
     const release = await acquireLease(store.directory, 'runtime.lock');
     try {
       const runtime = await startHttp(store, new Operations(store, credentials), port);
-      console.log(`SAP MCP listening at http://127.0.0.1:${port}/mcp`);
+      console.log(`SapLink listening at http://127.0.0.1:${port}/mcp`);
       let closing = false;
       const stop = async () => { if (closing) return; closing = true; try { await runtime.close(); } finally { await release(); } };
       process.once('SIGINT', () => { void stop(); });

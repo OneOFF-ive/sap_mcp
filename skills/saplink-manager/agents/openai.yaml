@@ -1,0 +1,4 @@
+interface:
+  display_name: "SapLink 管理助手"
+  short_description: "通过本机 CLI 安装、配置、诊断及启停 SapLink，安全引导用户录入凭据"
+  default_prompt: "Use $saplink-manager to diagnose and manage my local SapLink installation."

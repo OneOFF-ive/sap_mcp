@@ -34,7 +34,7 @@ internal static class Launcher
         var command = new StringBuilder(Quote(Path.Combine(root, "app", "dist", "cli.js")));
         foreach (string argument in arguments) command.Append(' ').Append(Quote(argument));
         var start = new ProcessStartInfo(Path.Combine(root, "runtime", "node.exe"), command.ToString()) { UseShellExecute = false };
-        start.EnvironmentVariables["SAP_MCP_WINDOWS_LAUNCHER"] = Path.Combine(root, "bin", "sapmcp.exe");
+        start.EnvironmentVariables["SAPLINK_WINDOWS_LAUNCHER"] = Path.Combine(root, "bin", "saplink.exe");
         return start;
     }
 
@@ -61,7 +61,7 @@ internal static class Launcher
     {
         int port; Guid startupId;
         if (arguments.Length != 2 || !int.TryParse(arguments[1], out port) || port < 1 || port > 65535 ||
-            !Guid.TryParse(Environment.GetEnvironmentVariable("SAP_MCP_STARTUP_ID"), out startupId)) return 1;
+            !Guid.TryParse(Environment.GetEnvironmentVariable("SAPLINK_STARTUP_ID"), out startupId)) return 1;
         var start = Node(new[] { "service", "_run", "--port", port.ToString() });
         var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)) };
         ProcessInfo process;
@@ -87,7 +87,7 @@ internal static class Launcher
         }
         catch
         {
-            Console.Error.WriteLine("SAP MCP could not start. Repair the installation; the bundled Node.js runtime is required.");
+            Console.Error.WriteLine("SapLink could not start. Repair the installation; the bundled Node.js runtime is required.");
             return 1;
         }
     }

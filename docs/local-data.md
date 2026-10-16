@@ -1,0 +1,22 @@
+# SapLink 命名与本地数据
+
+产品名称为 **SapLink**；CLI、npm 包名和 MCP 服务标识为 `saplink`。管理页面、托盘、安装器、快捷方式和 Windows 应用列表统一显示 SapLink。
+
+| 项目 | 默认位置或标识 |
+| --- | --- |
+| 程序安装目录 | `%LOCALAPPDATA%\Programs\SapLink` |
+| 连接配置和令牌哈希 | `%APPDATA%\saplink\config.json` |
+| 操作日志 | `%LOCALAPPDATA%\saplink\logs` |
+| 配置目录环境变量 | `SAPLINK_CONFIG_DIR` |
+| 日志目录环境变量 | `SAPLINK_LOG_DIR` |
+| Windows 凭据服务名 | `saplink`，按连接 ID 保存密码 |
+| 产品注册表键 | `HKCU\Software\SapLink` |
+| 卸载注册表键 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\SapLink` |
+| 安装清单 ID | `org.saplink.desktop` |
+| 源码测试与构建缓存 | 项目目录中的 `.saplink/` |
+
+使用 `saplink status --json` 或 `saplink doctor --json` 核实当前使用的配置目录。密码保存在 Windows 凭据管理器，不写入配置文件。
+
+0.1.0 是首个正式版本，只使用上述名称和标识，不提供开发阶段旧名称、旧目录或旧凭据标识的自动迁移。卸载保留用户配置、令牌、日志、凭据和未登记文件。
+
+安装步骤见 [Windows 安装指南](windows-installer.md)，日常操作见 [运维手册](operations.md)。

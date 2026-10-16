@@ -58,7 +58,7 @@ class FakeBackend implements Backend {
   async close() {}
 }
 async function fixture() {
-  const root = join(process.cwd(), '.sap-mcp', 'tests');
+  const root = join(process.cwd(), '.saplink', 'tests');
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'test-'));
   const store = new ConfigStore(directory);

@@ -8,7 +8,7 @@ import { AppError } from '../src/errors.js';
 
 const now = new Date('2026-10-16T12:00:00Z');
 test('log cleanup previews first and deletes only expired owned logs, preserving today and recent changes', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'sapmcp-log-cleanup-'));
+  const root = await mkdtemp(join(tmpdir(), 'saplink-log-cleanup-'));
   try {
     const files = ['operations-2026-09-15-0.jsonl', 'operations-2026-09-16-0.jsonl',
       'operations-2026-10-16-0.jsonl', 'operations-2026-02-30-0.jsonl', 'config.json', 'operations-2026-01-01-0.jsonl'];
@@ -32,7 +32,7 @@ test('log cleanup previews first and deletes only expired owned logs, preserving
 });
 
 test('log cleanup never traverses directories or directory junctions', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'sapmcp-log-links-'));
+  const root = await mkdtemp(join(tmpdir(), 'saplink-log-links-'));
   try {
     const logs = join(root, 'logs'); const external = join(root, 'external');
     await mkdir(logs); await mkdir(external);
@@ -47,7 +47,7 @@ test('log cleanup never traverses directories or directory junctions', async () 
 });
 
 test('log cleanup handles a missing directory and validates retention', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'sapmcp-log-input-'));
+  const root = await mkdtemp(join(tmpdir(), 'saplink-log-input-'));
   try {
     assert.equal((await cleanupLogs(30, true, join(root, 'absent'), now)).deleted_files, 0);
     for (const input of [-1, 1.5, 36501, '', ' ', null, undefined, true, NaN]) assert.throws(() => retentionDays(input), AppError);

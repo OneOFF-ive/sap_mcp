@@ -9,14 +9,14 @@ $installRoot = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
 if ($installRoot -eq [IO.Path]::GetPathRoot($installRoot).TrimEnd('\') -or $installRoot.Contains(';')) {
   throw 'Choose a dedicated application directory without semicolons.'
 }
-$productKey = if ($TestMode) { 'Software\SAPMCPInstallerTest' } else { 'Software\SAPMCP' }
-$environmentKey = if ($TestMode) { 'Software\SAPMCPInstallerTest\Environment' } else { 'Environment' }
+$productKey = if ($TestMode) { 'Software\SapLinkInstallerTest' } else { 'Software\SapLink' }
+$environmentKey = if ($TestMode) { 'Software\SapLinkInstallerTest\Environment' } else { 'Environment' }
 $manifestPath = Join-Path $installRoot 'install-manifest.json'
 
 function Read-Manifest {
   if (!(Test-Path -LiteralPath $manifestPath)) { return $null }
   $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($manifest.app_id -ne 'org.sapmcp.desktop' -or $manifest.schema_version -ne 1) { throw 'Unrecognized installation manifest.' }
+  if ($manifest.app_id -ne 'org.saplink.desktop' -or $manifest.schema_version -ne 1) { throw 'Unrecognized installation manifest.' }
   foreach ($relative in (@($manifest.files) + @($manifest.directories))) {
     if ($null -eq $relative) { continue }
     if ([IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.([\\/]|$)' -or $relative.Contains(':')) { throw 'Unsafe installation manifest path.' }
@@ -30,19 +30,21 @@ function Check-Installation {
   if (Test-Path -LiteralPath $installRoot) {
     $items = @(Get-ChildItem -LiteralPath $installRoot -Force)
     if ($items.Count -and !(Read-Manifest)) {
-      Write-Output "目标文件夹包含其他文件，请选择空文件夹或原 SAP MCP 安装目录：$installRoot"
+      Write-Output "目标文件夹包含其他文件，请选择空文件夹或原 SapLink 安装目录：$installRoot"
       exit 13
     }
   }
-  $executables = @('runtime\node.exe','bin\sapmcp.exe','bin\sapmcp-gui.exe') | ForEach-Object { Join-Path $installRoot $_ }
-  $running = @(Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='sapmcp.exe' OR Name='sapmcp-gui.exe'" | Where-Object {
+  $executables = @('runtime\node.exe','bin\saplink.exe','bin\saplink-gui.exe') | ForEach-Object { Join-Path $installRoot $_ }
+  $running = @(Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='saplink.exe' OR Name='saplink-gui.exe'" | Where-Object {
     $_.ExecutablePath -and $executables -contains $_.ExecutablePath
   })
   if ($running.Count) {
-    Write-Output "安装目录中的程序仍在运行（PID：$($running.ProcessId -join ', ')）。请从托盘退出管理界面；后台服务请运行 sapmcp service stop。前台运行的程序请在其终端按 Ctrl+C。"
+    Write-Output "安装目录中的程序仍在运行（PID：$($running.ProcessId -join ', ')）。请从托盘退出管理界面；后台服务请运行 saplink service stop。前台运行的程序请在其终端按 Ctrl+C。"
     exit 10
   }
-  $configDirectory = if ($env:SAP_MCP_CONFIG_DIR) { $env:SAP_MCP_CONFIG_DIR } else { Join-Path $env:APPDATA 'sap-mcp' }
+  # Match src/paths.ts.
+  $configDirectory = if ($null -ne $env:SAPLINK_CONFIG_DIR) { $env:SAPLINK_CONFIG_DIR }
+    else { Join-Path $env:APPDATA 'saplink' }
   $lockPath = Join-Path $configDirectory 'runtime.lock'
   $guardPath = "$lockPath.guard"
   if (Test-Path -LiteralPath $guardPath) {
@@ -61,13 +63,13 @@ function Check-Installation {
     $sameOwner = $false
     if ($owner) {
       if ($legacy) {
-        $sameOwner = $owner.CommandLine -match '(sap_mcp[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)'
+        $sameOwner = $owner.CommandLine -match '(saplink[\\/]dist[\\/]cli\.js|\bdist[\\/]cli\.js)(?:["\s]|$)'
       } else {
         $sameOwner = [string]::Equals([string]$record.started_at, $owner.CreationDate.ToUniversalTime().ToString('o'), [StringComparison]::Ordinal)
       }
     }
     if ($sameOwner) {
-      Write-Output "SAP MCP 仍在运行（PID：$parsedId）。请从托盘退出管理界面，或运行 sapmcp service stop；前台程序请按 Ctrl+C。运行锁：$lockPath"
+      Write-Output "SapLink 仍在运行（PID：$parsedId）。请从托盘退出管理界面，或运行 saplink service stop；前台程序请按 Ctrl+C。运行锁：$lockPath"
       exit 11
     }
     # A new guard means the read may have raced a lease change. Do not act on that snapshot.
@@ -82,7 +84,7 @@ function Check-Installation {
 if ($Action -eq 'Check') {
   try { Check-Installation }
   catch {
-    Write-Output "无法确认安装目录或运行状态，请运行 sapmcp status --json / sapmcp doctor --json 后重试。详情：$($_.Exception.Message)"
+    Write-Output "无法确认安装目录或运行状态，请运行 saplink status --json / saplink doctor --json 后重试。详情：$($_.Exception.Message)"
     exit 14
   }
 }
@@ -91,7 +93,7 @@ if ($Action -eq 'RefreshIcons') {
   Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class SapMcpShellIcons {
+public static class SapLinkShellIcons {
   [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
   private struct FileInfo {
     public IntPtr Icon;
@@ -115,14 +117,14 @@ public static class SapMcpShellIcons {
   }
 }
 '@
-  foreach ($relative in @('bin\sapmcp.exe','bin\sapmcp-gui.exe','Uninstall.exe')) {
+  foreach ($relative in @('bin\saplink.exe','bin\saplink-gui.exe','Uninstall.exe')) {
     $path = Join-Path $installRoot $relative
-    if (Test-Path -LiteralPath $path -PathType Leaf) { [SapMcpShellIcons]::RefreshExecutable($path) }
+    if (Test-Path -LiteralPath $path -PathType Leaf) { [SapLinkShellIcons]::RefreshExecutable($path) }
   }
   if ($InstallerPath -and (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
-    [SapMcpShellIcons]::RefreshExecutable([IO.Path]::GetFullPath($InstallerPath))
+    [SapLinkShellIcons]::RefreshExecutable([IO.Path]::GetFullPath($InstallerPath))
   }
-  [SapMcpShellIcons]::SHChangeNotify(0x08000000, 0, $null, $null)
+  [SapLinkShellIcons]::SHChangeNotify(0x08000000, 0, $null, $null)
   exit 0
 }
 
@@ -186,10 +188,10 @@ try {
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class SapMcpEnvironment {
+public static class SapLinkEnvironment {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
   public static extern IntPtr SendMessageTimeout(IntPtr target, uint message, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
 }
 '@
 $broadcastResult = [UIntPtr]::Zero
-[void][SapMcpEnvironment]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$broadcastResult)
+[void][SapLinkEnvironment]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$broadcastResult)

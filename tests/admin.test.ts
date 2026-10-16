@@ -10,10 +10,10 @@ import { startAdmin } from '../src/admin.js';
 import type { Backend } from '../src/adt.js';
 
 test('local web management protects APIs and manages connections, credentials, tokens and service lifecycle', async () => {
-  const root = join(process.cwd(), '.sap-mcp', 'tests'); await mkdir(root, { recursive: true });
+  const root = join(process.cwd(), '.saplink', 'tests'); await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'admin-'));
-  const oldLogDirectory = process.env.SAP_MCP_LOG_DIR;
-  process.env.SAP_MCP_LOG_DIR = join(directory, 'logs');
+  const oldLogDirectory = process.env.SAPLINK_LOG_DIR;
+  process.env.SAPLINK_LOG_DIR = join(directory, 'logs');
   const store = new ConfigStore(directory); const passwords = new Map<string, string>();
   const credentials: Credentials = { get: async id => { const value = passwords.get(id); if (!value) throw new Error('Missing'); return value; },
     set: async (id, value) => { passwords.set(id, value); }, remove: async id => { passwords.delete(id); } };
@@ -127,7 +127,7 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.equal((await api('application/stop', 'POST')).body.success, true);
   } finally {
     await runtime.close(); await rm(directory, { recursive: true, force: true });
-    if (oldLogDirectory === undefined) delete process.env.SAP_MCP_LOG_DIR;
-    else process.env.SAP_MCP_LOG_DIR = oldLogDirectory;
+    if (oldLogDirectory === undefined) delete process.env.SAPLINK_LOG_DIR;
+    else process.env.SAPLINK_LOG_DIR = oldLogDirectory;
   }
 });

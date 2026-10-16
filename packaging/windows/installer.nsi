@@ -18,34 +18,34 @@ SetCompressor /SOLID zlib
   !error "OUTPUT_FILE is required"
 !endif
 !ifndef ICON_FILENAME
-  !define ICON_FILENAME "sapmcp.ico"
+  !define ICON_FILENAME "saplink.ico"
 !endif
 !ifdef TEST_MODE
-  !define PRODUCT_KEY "Software\SAPMCPInstallerTest"
-  !define UNINSTALL_KEY "Software\SAPMCPInstallerTest\Uninstall"
+  !define PRODUCT_KEY "Software\SapLinkInstallerTest"
+  !define UNINSTALL_KEY "Software\SapLinkInstallerTest\Uninstall"
   !define TEST_FLAG " -TestMode"
 !else
-  !define PRODUCT_KEY "Software\SAPMCP"
-  !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\SAPMCP"
+  !define PRODUCT_KEY "Software\SapLink"
+  !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\SapLink"
   !define TEST_FLAG ""
 !endif
 
-Name "SAP MCP ${APP_VERSION} (${TARGET_ARCH})"
+Name "SapLink ${APP_VERSION} (${TARGET_ARCH})"
 OutFile "${OUTPUT_FILE}"
-InstallDir "$LOCALAPPDATA\Programs\SAPMCP"
+InstallDir "$LOCALAPPDATA\Programs\SapLink"
 InstallDirRegKey HKCU "${PRODUCT_KEY}" "InstallDir"
-!define MUI_ICON "${STAGE_DIR}\sapmcp.ico"
-!define MUI_UNICON "${STAGE_DIR}\sapmcp.ico"
+!define MUI_ICON "${STAGE_DIR}\saplink.ico"
+!define MUI_UNICON "${STAGE_DIR}\saplink.ico"
 VIProductVersion "${APP_VERSION}.0"
-VIAddVersionKey "ProductName" "SAP MCP"
-VIAddVersionKey "FileDescription" "SAP MCP Windows Installer"
+VIAddVersionKey "ProductName" "SapLink"
+VIAddVersionKey "FileDescription" "SapLink Windows Installer"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
-VIAddVersionKey "LegalCopyright" "SAP MCP project"
+VIAddVersionKey "LegalCopyright" "SapLink project"
 
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\sapmcp-gui.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "打开 SAP MCP 图形管理界面"
-!define MUI_FINISHPAGE_TEXT "安装完成。请重新打开终端后使用 sapmcp 命令。$\r$\n$\r$\n图形界面启动后可从系统托盘重新打开或正常退出。卸载时保留连接配置、日志和 Windows 凭据。"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\saplink-gui.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "打开 SapLink 图形管理界面"
+!define MUI_FINISHPAGE_TEXT "安装完成。请重新打开终端后使用 saplink 命令。$\r$\n$\r$\n图形界面启动后可从系统托盘重新打开或正常退出。卸载时保留连接配置、日志和 Windows 凭据。"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW ShowInstallDirectory
@@ -71,8 +71,8 @@ FunctionEnd
 Function ShowInstallDirectory
   ${If} $ExistingInstallDirectory != ""
     StrCpy $INSTDIR $ExistingInstallDirectory
-    !insertmacro MUI_HEADER_TEXT "升级 / 修复 SAP MCP" "已检测到当前用户的安装，将更新原目录中的程序。"
-    SendMessage $mui.DirectoryPage.Text ${WM_SETTEXT} 0 "STR:已安装 SAP MCP。重复安装将升级或修复原有程序，不允许安装第二份。$\r$\n如需更换安装位置，请先卸载旧版本；连接配置和凭据会保留。"
+    !insertmacro MUI_HEADER_TEXT "升级 / 修复 SapLink" "已检测到当前用户的安装，将更新原目录中的程序。"
+    SendMessage $mui.DirectoryPage.Text ${WM_SETTEXT} 0 "STR:已安装 SapLink。重复安装将升级或修复原有程序，不允许安装第二份。$\r$\n如需更换安装位置，请先卸载旧版本；连接配置和凭据会保留。"
     SendMessage $mui.DirectoryPage.Directory ${WM_SETTEXT} 0 "STR:$ExistingInstallDirectory"
     SendMessage $mui.DirectoryPage.Directory ${EM_SETREADONLY} 1 0
     EnableWindow $mui.DirectoryPage.BrowseButton 0
@@ -105,7 +105,7 @@ Function .onInit
   Call ReadExistingInstallation
   ${If} $ExistingInstallDirectory != ""
     ${If} $INSTDIR != $ExistingInstallDirectory
-      MessageBox MB_ICONSTOP "已安装 SAP MCP：$\r$\n$ExistingInstallDirectory$\r$\n$\r$\n只能在原目录升级或修复。更换目录前请先卸载旧版本；连接配置和凭据会保留。" /SD IDOK
+      MessageBox MB_ICONSTOP "已安装 SapLink：$\r$\n$ExistingInstallDirectory$\r$\n$\r$\n只能在原目录升级或修复。更换目录前请先卸载旧版本；连接配置和凭据会保留。" /SD IDOK
       SetErrorLevel 15
       Abort
     ${EndIf}
@@ -113,7 +113,7 @@ Function .onInit
   ${EndIf}
 FunctionEnd
 
-Section "SAP MCP 主程序（内置 Node.js，离线安装）" Core
+Section "SapLink 主程序（内置 Node.js，离线安装）" Core
   SectionIn RO
   ; Recheck immediately before writing, including installations registered since initialization.
   Call ReadExistingInstallation
@@ -148,7 +148,7 @@ Section "SAP MCP 主程序（内置 Node.js，离线安装）" Core
   File /r "${STAGE_DIR}\*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "${PRODUCT_KEY}" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "SAP MCP"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "SapLink"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\${ICON_FILENAME}"
@@ -157,19 +157,19 @@ Section "SAP MCP 主程序（内置 Node.js，离线安装）" Core
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
   SetShellVarContext current
   !ifdef TEST_MODE
-    StrCpy $StartMenuDirectory "$INSTDIR\test-shortcuts\Start Menu\SAP MCP"
-    StrCpy $DesktopShortcut "$INSTDIR\test-shortcuts\Desktop\SAP MCP.lnk"
+    StrCpy $StartMenuDirectory "$INSTDIR\test-shortcuts\Start Menu\SapLink"
+    StrCpy $DesktopShortcut "$INSTDIR\test-shortcuts\Desktop\SapLink.lnk"
     CreateDirectory "$INSTDIR\test-shortcuts\Desktop"
   !else
-    StrCpy $StartMenuDirectory "$SMPROGRAMS\SAP MCP"
-    StrCpy $DesktopShortcut "$DESKTOP\SAP MCP.lnk"
+    StrCpy $StartMenuDirectory "$SMPROGRAMS\SapLink"
+    StrCpy $DesktopShortcut "$DESKTOP\SapLink.lnk"
   !endif
   CreateDirectory "$StartMenuDirectory"
-  CreateShortcut "$StartMenuDirectory\SAP MCP 管理界面.lnk" "$INSTDIR\bin\sapmcp-gui.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
-  CreateShortcut "$StartMenuDirectory\卸载 SAP MCP.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
+  CreateShortcut "$StartMenuDirectory\SapLink 管理界面.lnk" "$INSTDIR\bin\saplink-gui.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
+  CreateShortcut "$StartMenuDirectory\卸载 SapLink.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
 SectionEnd
 
-Section "将 sapmcp 加入当前用户 PATH（重新打开终端生效）" UserPath
+Section "将 saplink 加入当前用户 PATH（重新打开终端生效）" UserPath
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\installer-control.ps1" -Action AddPath -InstallDirectory "$INSTDIR"${TEST_FLAG}'
   Pop $0
   Pop $1
@@ -180,7 +180,7 @@ Section "将 sapmcp 加入当前用户 PATH（重新打开终端生效）" UserP
 SectionEnd
 
 Section "创建桌面快捷方式" DesktopIcon
-  CreateShortcut "$DesktopShortcut" "$INSTDIR\bin\sapmcp-gui.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
+  CreateShortcut "$DesktopShortcut" "$INSTDIR\bin\saplink-gui.exe" "" "$INSTDIR\${ICON_FILENAME}" 0
 SectionEnd
 
 Section "-Refresh icons"
@@ -220,18 +220,18 @@ Section "Uninstall"
   ${EndIf}
   SetShellVarContext current
   !ifdef TEST_MODE
-    Delete "$INSTDIR\test-shortcuts\Start Menu\SAP MCP\SAP MCP 管理界面.lnk"
-    Delete "$INSTDIR\test-shortcuts\Start Menu\SAP MCP\卸载 SAP MCP.lnk"
-    Delete "$INSTDIR\test-shortcuts\Desktop\SAP MCP.lnk"
-    RMDir "$INSTDIR\test-shortcuts\Start Menu\SAP MCP"
+    Delete "$INSTDIR\test-shortcuts\Start Menu\SapLink\SapLink 管理界面.lnk"
+    Delete "$INSTDIR\test-shortcuts\Start Menu\SapLink\卸载 SapLink.lnk"
+    Delete "$INSTDIR\test-shortcuts\Desktop\SapLink.lnk"
+    RMDir "$INSTDIR\test-shortcuts\Start Menu\SapLink"
     RMDir "$INSTDIR\test-shortcuts\Start Menu"
     RMDir "$INSTDIR\test-shortcuts\Desktop"
     RMDir "$INSTDIR\test-shortcuts"
   !else
-    Delete "$SMPROGRAMS\SAP MCP\SAP MCP 管理界面.lnk"
-    Delete "$SMPROGRAMS\SAP MCP\卸载 SAP MCP.lnk"
-    RMDir "$SMPROGRAMS\SAP MCP"
-    Delete "$DESKTOP\SAP MCP.lnk"
+    Delete "$SMPROGRAMS\SapLink\SapLink 管理界面.lnk"
+    Delete "$SMPROGRAMS\SapLink\卸载 SapLink.lnk"
+    RMDir "$SMPROGRAMS\SapLink"
+    Delete "$DESKTOP\SapLink.lnk"
   !endif
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
   DeleteRegValue HKCU "${PRODUCT_KEY}" "InstallDir"

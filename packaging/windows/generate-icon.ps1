@@ -67,7 +67,7 @@ try {
 
 # Give shell and browser caches a new identity when the artwork changes.
 $iconHash = (Get-FileHash -LiteralPath $Output -Algorithm SHA256).Hash.Substring(0,12).ToLowerInvariant()
-$iconName = "sapmcp-$iconHash.ico"
+$iconName = "saplink-$iconHash.ico"
 Copy-Item -LiteralPath $Output -Destination (Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($Output))) $iconName) -Force
 if ($WebIcon) {
   $webPath = [IO.Path]::GetFullPath($WebIcon)

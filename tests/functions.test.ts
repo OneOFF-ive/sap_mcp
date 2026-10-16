@@ -33,7 +33,7 @@ test('function URI parsing accepts groups and members but rejects other nested e
 });
 
 test('function interface save normalization and group activation verification work together', async () => {
-  const root = join(process.cwd(), '.sap-mcp/tests'); await mkdir(root, { recursive: true });
+  const root = join(process.cwd(), '.saplink/tests'); await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'function-format-'));
   const store = new ConfigStore(directory);
   const c = connectionSchema.parse({ connection_id: randomUUID(), name: 'mock', base_url: 'http://mock.test', client: '001', username: 'TEST', language: 'EN', write_enabled: true });
@@ -189,7 +189,7 @@ test('function ADT adapter creates groups/modules and edits module source with i
 });
 
 test('function tools enforce transport and write controls, and group activation rejects stale snapshots', async () => {
-  const root = join(process.cwd(), '.sap-mcp/tests'); await mkdir(root, { recursive: true });
+  const root = join(process.cwd(), '.saplink/tests'); await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'functions-')); const store = new ConfigStore(directory);
   const connection = connectionSchema.parse({ connection_id: randomUUID(), name: 'mock', base_url: 'http://mock.test', client: '001', username: 'TEST', language: 'EN', write_enabled: true });
   await store.save({ schema_version: 1, connections: [connection], tokens: [] });

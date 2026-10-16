@@ -1,8 +1,7 @@
 import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
-
-export const defaultLogDirectory = () => process.env.SAP_MCP_LOG_DIR ?? join(process.env.LOCALAPPDATA ?? homedir(), 'sap-mcp', 'logs');
+import { defaultLogDirectory } from './paths.js';
+export { defaultLogDirectory } from './paths.js';
 
 export class AuditLog {
   private queue: Promise<void> = Promise.resolve();

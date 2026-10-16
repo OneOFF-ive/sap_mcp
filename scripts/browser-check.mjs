@@ -8,7 +8,7 @@ import { startAdmin } from '../dist/admin.js';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
-const root = join(process.cwd(), '.sap-mcp', 'browser-check'); await mkdir(root, { recursive: true });
+const root = join(process.cwd(), '.saplink', 'browser-check'); await mkdir(root, { recursive: true });
 const directory = await mkdtemp(join(root, 'config-'));
 const passwords = new Map();
 const credentials = { get: async id => passwords.get(id), set: async (id, value) => passwords.set(id, value), remove: async id => passwords.delete(id) };

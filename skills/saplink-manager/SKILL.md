@@ -1,15 +1,15 @@
 ---
-name: sap-mcp-manager
-description: "Install, configure, diagnose, start, stop, restart, and upgrade a local SAP MCP server through its terminal CLI. Use for managing the tool itself from Codex or another terminal-capable AI client; use SAP MCP tools for ABAP development and business queries."
+name: saplink-manager
+description: "Install, configure, diagnose, start, stop, restart, and upgrade a local SapLink server through its terminal CLI. Use for managing the tool itself from Codex or another terminal-capable AI client; use SapLink tools for ABAP development and business queries."
 ---
 
-# SAP MCP Manager
+# SapLink Manager
 
-First resolve `sapmcp` in the terminal. A Windows installer provides this command in any directory with its own Node.js runtime. For a source checkout (`package.json` name `sap-mcp`), use `node <checkout>/dist/cli.js` instead of `sapmcp` in the examples. Use a known checkout only when the installed command is unavailable or source development is intended. This workflow needs a local terminal and Windows for credential entry. It does not depend on an already-running MCP connection.
+First resolve `saplink` in the terminal. A Windows installer provides this command in any directory with its own Node.js runtime. For a source checkout (`package.json` name `saplink`), use `node <checkout>/dist/cli.js` instead of `saplink` in the examples. Use a known checkout only when the installed command is unavailable or source development is intended. This workflow needs a local terminal and Windows for credential entry. It does not depend on an already-running MCP connection.
 
 ## Inspect and install
 
-Use `sapmcp status --json` and `sapmcp doctor --json`. Invoke the CLI directly so npm banners do not break JSON parsing. Every operational JSON result has `schema_version`, `status`, and `data` or `error`; also inspect the process exit code. A completed doctor command can have `status=success` but exit 1 and `data.healthy=false` because checks failed. By default doctor makes no SAP request; `--connection <name>` explicitly tests that login and ADT discovery.
+Use `saplink status --json` and `saplink doctor --json`. Invoke the CLI directly so npm banners do not break JSON parsing. Every operational JSON result has `schema_version`, `status`, and `data` or `error`; also inspect the process exit code. A completed doctor command can have `status=success` but exit 1 and `data.healthy=false` because checks failed. By default doctor makes no SAP request; `--connection <name>` explicitly tests that login and ADT discovery.
 
 For an installer deployment, inspect the installation's bundled runtime before suggesting system Node.js or npm. Reopen the parent terminal application if it has not picked up the new PATH. Repair using the intended installer version when program files are missing. For source development, the project requires Node.js 22+; install pinned dependencies with `npm ci --ignore-scripts` and build with `npm run build`. Do not run a broad dependency upgrade or `npm audit fix --force` as setup. Respect user-selected installation paths and versions.
 
@@ -17,12 +17,12 @@ Report the diagnosed cause and perform the authorized fix. Do not keep retrying 
 
 ## Configure connections and credentials
 
-Use `sapmcp connection list --json` to find the exact name and Client. Names allow English letters, digits, `_` and `-`; Client is exactly three digits. Keep writes off unless the user requests enabling them. Treat the user's request for a named operation as authorization; do not ask for duplicate confirmation.
+Use `saplink connection list --json` to find the exact name and Client. Names allow English letters, digits, `_` and `-`; Client is exactly three digits. Keep writes off unless the user requests enabling them. Treat the user's request for a named operation as authorization; do not ask for duplicate confirmation.
 
 For a new connection, collect only non-secret fields and run:
 
 ```powershell
-sapmcp connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
+saplink connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
 ```
 
 Explain that a local password window will appear, then let the human enter the password there. Never ask for a password in chat, pass it on the command line or through an environment variable, or print credential-store content. `--json` never prompts in the terminal; without `--password-prompt`, a required password produces `INTERACTION_REQUIRED`. Cancelled input must not be retried automatically. Passwords are stored under the connection UUID in the current Windows user's credential store.
@@ -42,10 +42,10 @@ Revoke only the intended token ID with `token revoke <id> --json`. Revoking a to
 ## Start, stop, restart and recover
 
 ```powershell
-sapmcp service start --port 8765 --json
-sapmcp service status --json
-sapmcp service restart --json
-sapmcp service stop --json
+saplink service start --port 8765 --json
+saplink service status --json
+saplink service restart --json
+saplink service stop --json
 ```
 
 Startup needs at least one token. A managed service runs hidden in the background; restart preserves its port unless explicitly changed. Stop waits for graceful shutdown and does not force-kill SAP work. Control is authenticated separately from MCP tokens, and process identity is checked against the runtime lease. The JSON status omits control secrets.

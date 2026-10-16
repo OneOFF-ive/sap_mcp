@@ -1,10 +1,10 @@
 param()
 $ErrorActionPreference = 'Stop'
-$root = Join-Path $env:TEMP ('SAPMCP Preflight ' + [Guid]::NewGuid().ToString('N'))
+$root = Join-Path $env:TEMP ('SapLink Preflight ' + [Guid]::NewGuid().ToString('N'))
 $config = Join-Path $root 'config'
 $install = Join-Path $root 'application'
 New-Item -ItemType Directory -Path $config,$install | Out-Null
-$previousConfig = $env:SAP_MCP_CONFIG_DIR
+$previousConfig = $env:SAPLINK_CONFIG_DIR
 $helper = Join-Path $PSScriptRoot 'installer-control.ps1'
 $lock = Join-Path $config 'runtime.lock'
 function Expect-Check([int]$Expected, [string]$Name) {
@@ -15,7 +15,7 @@ function Expect-Check([int]$Expected, [string]$Name) {
   Write-Host "PASS: $Name"
 }
 try {
-  $env:SAP_MCP_CONFIG_DIR = $config
+  $env:SAPLINK_CONFIG_DIR = $config
   Expect-Check 0 'Empty configuration'
   # Find a demonstrably absent PID rather than assuming a particular number is unused.
   $unused = 2147483647
@@ -37,5 +37,5 @@ try {
   Set-Content -LiteralPath (Join-Path $install 'unknown.txt') -Value 'test'
   Expect-Check 13 'Unrecognized nonempty directory blocks installation'
 } finally {
-  $env:SAP_MCP_CONFIG_DIR = $previousConfig
+  $env:SAPLINK_CONFIG_DIR = $previousConfig
 }

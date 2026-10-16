@@ -1,38 +1,38 @@
 # AI 终端管理
 
-适用于拥有本机终端执行能力的 AI 客户端。CLI 负责管理服务本身，MCP tools 负责 SAP 对象和数据操作；服务未启动时仍可调用 CLI。当前管理平台为 Windows、Node.js 22+。
+适用于拥有本机终端执行能力的 AI 客户端，以下统一使用安装后的 `saplink` 命令。CLI 负责管理服务本身，MCP tools 负责 SAP 对象和数据操作；服务未启动时仍可调用 CLI。当前管理平台为 Windows，安装包内置运行环境。
 
 ## 机器可读入口
 
-Windows 安装包用户重新打开终端后，在任意目录使用 `sapmcp`；无需安装系统 Node.js。源码方式在项目目录将下列 `sapmcp` 替换为 `node dist/cli.js`。直接使用 CLI 可避免 `npm start` 的额外输出影响 JSON 解析：
+Windows 安装包用户重新打开终端后，在任意目录使用 `saplink`，无需安装系统 Node.js。源码运行方式单独见 [开发与构建指南](development.md)。机器可读命令示例：
 
 ```powershell
-sapmcp version --json
-sapmcp status --json
-sapmcp doctor --json
-sapmcp connection list --json
-sapmcp token list --json
+saplink version --json
+saplink status --json
+saplink doctor --json
+saplink connection list --json
+saplink token list --json
 ```
 
 结果包含 `schema_version: 1`、`status`，以及 `data` 或 `error`；同时检查进程退出码。诊断完成但发现问题时，doctor 返回 `status=success`、`data.healthy=false` 并退出 1；这表示报告已成功生成，并非环境健康。未知参数、缺少必要输入或操作失败返回 `status=error` 并退出 1。`--help` / `--version` 仍为普通帮助文本。
 
 status 不输出密码、MCP 令牌、后台控制令牌或进程命令行。doctor 检查 Node/Windows、构建、配置、目录写入、令牌、运行锁、空闲端口和当前用户凭据是否存在；只用临时目录探测可写性，不更改连接或权限。默认不访问 SAP。只有显式指定 `doctor --connection dev --json` 才测试该连接登录与 discovery，成功不等于拥有全部 SAP 权限。
 
-`sapmcp version` 与 `sapmcp --version` 输出当前应用版本号；`sapmcp version --json` 在 `data.version` 中返回版本，供 AI 客户端解析。它读取本地安装的版本，不访问网络查询更新。
+`saplink version` 与 `saplink --version` 输出当前应用版本号；`saplink version --json` 在 `data.version` 中返回版本，供 AI 客户端解析。它读取本地安装的版本，不访问网络查询更新。
 
 ## 缓存与日志清理
 
-历史审计日志使用 `sapmcp logs clear --older-than-days 30 --json` 先预览，用户意图包含删除时再加 `--yes`。默认保留 30 天，0 仍保留当天日志。检查 `deleted_files`、`deleted_bytes`、`failed_files` 和退出码，部分失败不应宣称全部成功；不要将审计记录、令牌文件或配置当作普通缓存随意删除。
+历史审计日志使用 `saplink logs clear --older-than-days 30 --json` 先预览，用户意图包含删除时再加 `--yes`。默认保留 30 天，0 仍保留当天日志。检查 `deleted_files`、`deleted_bytes`、`failed_files` 和退出码，部分失败不应宣称全部成功；不要将审计记录、令牌文件或配置当作普通缓存随意删除。
 
-清理后台连接缓存使用 `sapmcp cache clear --json`，无需重启服务。检查 `cleared_sessions` 和 `retained_write_requests`；该命令保留写入防重复记录以及全部用户配置。`BUSY` 应等待当前操作结束；`SESSION_NEEDS_REVIEW` 应先核实 SAP 锁；`CACHE_CLEAR_FAILED` 或 `CACHE_CLEAR_UNKNOWN` 不自动重试或重启。UI 持有运行锁时使用其“MCP 服务”页的清理按钮。
+清理后台连接缓存使用 `saplink cache clear --json`，无需重启服务。检查 `cleared_sessions` 和 `retained_write_requests`；该命令保留写入防重复记录以及全部用户配置。`BUSY` 应等待当前操作结束；`SESSION_NEEDS_REVIEW` 应先核实 SAP 锁；`CACHE_CLEAR_FAILED` 或 `CACHE_CLEAR_UNKNOWN` 不自动重试或重启。UI 持有运行锁时使用其“MCP 服务”页的清理按钮。
 
 ## 安全配置连接
 
 ```powershell
-sapmcp connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
-sapmcp connection edit dev --language ZH --disable-writes --json
-sapmcp connection test dev --json
-sapmcp connection remove dev --yes --json
+saplink connection add dev --url https://sap-host:443 --client 001 --username SAPUSER --language EN --password-prompt --json
+saplink connection edit dev --language ZH --disable-writes --json
+saplink connection test dev --json
+saplink connection remove dev --yes --json
 ```
 
 `--password-prompt` 弹出本机 Windows 密码窗口，密码通过内部管道送入 Windows 凭据管理器，不出现在 AI 命令输出、参数、环境变量或配置文件里。窗口取消、不可用或超时会失败，不保存新密码。新连接及登录地址/Client/用户名变化时必须重新录入密码；未传该选项时，JSON 模式返回 `INTERACTION_REQUIRED`，不会卡在终端询问中。
@@ -44,10 +44,10 @@ sapmcp connection remove dev --yes --json
 ## 后台服务
 
 ```powershell
-sapmcp service start --port 8765 --json
-sapmcp service status --json
-sapmcp service restart --json
-sapmcp service stop --json
+saplink service start --port 8765 --json
+saplink service status --json
+saplink service restart --json
+saplink service stop --json
 ```
 
 start 要求至少一个 MCP 令牌。后台进程隐藏运行，不依赖发起命令的终端保持打开。重复启动相同端口的已管理实例会返回原状态；更改端口使用 restart 的 `--port`。不指定端口的 restart 保留当前已管理端口，停止状态则默认 8765。
@@ -69,9 +69,9 @@ stop 通过单独鉴权的 loopback 控制接口请求正常关闭，等待已�
 ## 令牌及客户端参数
 
 ```powershell
-sapmcp token create --out C:\Users\USER\AppData\Roaming\sap-mcp\client-token.json --json
-sapmcp client-config --token-file C:\Users\USER\AppData\Roaming\sap-mcp\client-token.json --out C:\Users\USER\AppData\Roaming\sap-mcp\connection-parameters.json --json
-sapmcp token revoke TOKEN_ID --json
+saplink token create --out C:\Users\USER\AppData\Roaming\saplink\client-token.json --json
+saplink client-config --token-file C:\Users\USER\AppData\Roaming\saplink\client-token.json --out C:\Users\USER\AppData\Roaming\saplink\connection-parameters.json --json
+saplink token revoke TOKEN_ID --json
 ```
 
 替换示例路径与 ID。父目录需要已存在，输出文件必须是新文件，不覆盖已有文件。JSON 结果只返回 ID/路径，不返回明文令牌。JSON 或被重定向的 token create 必须提供 `--out`；真实交互终端仍可一次性显示令牌。
@@ -80,6 +80,6 @@ client-config 验证令牌属于当前配置且尚未撤销，再导出 `transpo
 
 ## 管理 skill 与升级
 
-项目附带 [sap-mcp-manager](../skills/sap-mcp-manager/SKILL.md)，为终端型 AI 提供安装、配置、启停、诊断、升级和卸载边界。它不要求 MCP 服务预先运行，也不会执行 SAP 业务写入。Codex 的个人安装位置为 `%USERPROFILE%\.codex\skills\sap-mcp-manager`；其他客户端按其 skill 导入方式使用这份说明。
+项目附带 [saplink-manager](../skills/saplink-manager/SKILL.md)，为终端型 AI 提供安装、配置、启停、诊断、升级和卸载边界。它不要求 MCP 服务预先运行，也不会执行 SAP 业务写入。Codex 的个人安装位置为 `%USERPROFILE%\.codex\skills\saplink-manager`；其他客户端按其 skill 导入方式使用这份说明。
 
 升级由 AI 在用户指定版本和目录内完成：记录当前版本及本地改动、停止已管理实例、更新依赖和构建、测试后恢复原端口。不要强制丢弃未提交改动；构建失败应保留现场并报告真实运行状态。自动 Git 回滚、客户端专属配置写入、Windows Service 注册以及系统软件安装没有隐藏在这些 CLI 命令中。

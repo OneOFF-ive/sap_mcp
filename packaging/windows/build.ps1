@@ -5,8 +5,8 @@
 )
 $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-$buildRoot = Join-Path $repository '.sap-mcp\installer-build'
-$cache = Join-Path $repository '.sap-mcp\installer-cache'
+$buildRoot = Join-Path $repository '.saplink\installer-build'
+$cache = Join-Path $repository '.saplink\installer-cache'
 $output = Join-Path $repository 'outputs\installers'
 if ($TestMode) { $output = Join-Path $buildRoot 'tests' }
 New-Item -ItemType Directory -Force -Path $buildRoot,$cache,$output | Out-Null
@@ -44,7 +44,7 @@ function Copy-VcRuntime([string]$Arch, [string]$Stage, [string]$NativeDirectory)
   }
   # expand.exe cannot reliably process CABs on UNC shares. Use a fresh local
   # temporary directory; retain it on failure for inspection.
-  $extractRoot = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'SAPMCP-runtime-build'))
+  $extractRoot = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'SapLink-runtime-build'))
   $extract = Join-Path $extractRoot ([Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $extract -Force | Out-Null
   & node (Join-Path $PSScriptRoot 'extract-cabinets.cjs') $bundle $extract
@@ -122,26 +122,26 @@ try {
     Copy-Item -LiteralPath (Join-Path $cache 'nsis-3.12\COPYING') -Destination (Join-Path $stage 'licenses\NSIS-COPYING.txt')
     $nativeDirectory = Join-Path $app "node_modules\@napi-rs\keyring-win32-$arch-msvc"
     Copy-VcRuntime $arch $stage $nativeDirectory
-    & (Join-Path $PSScriptRoot 'generate-icon.ps1') -Output (Join-Path $stage 'sapmcp.ico') -WebIcon (Join-Path $app 'web\app-icon.png')
-    $iconHash = (Get-FileHash -LiteralPath (Join-Path $stage 'sapmcp.ico')).Hash.Substring(0,12).ToLowerInvariant()
-    $iconName = "sapmcp-$iconHash.ico"
-    & $csc /nologo /target:exe /platform:anycpu /codepage:65001 "/win32icon:$stage\sapmcp.ico" "/out:$bin\sapmcp.exe" (Join-Path $PSScriptRoot 'Launcher.cs')
+    & (Join-Path $PSScriptRoot 'generate-icon.ps1') -Output (Join-Path $stage 'saplink.ico') -WebIcon (Join-Path $app 'web\app-icon.png')
+    $iconHash = (Get-FileHash -LiteralPath (Join-Path $stage 'saplink.ico')).Hash.Substring(0,12).ToLowerInvariant()
+    $iconName = "saplink-$iconHash.ico"
+    & $csc /nologo /target:exe /platform:anycpu /codepage:65001 "/win32icon:$stage\saplink.ico" "/out:$bin\saplink.exe" (Join-Path $PSScriptRoot 'Launcher.cs')
     Assert-Exit 'Console launcher compilation'
-    & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 /define:GUI /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32icon:$stage\sapmcp.ico" "/out:$bin\sapmcp-gui.exe" (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GuiLauncher.cs')
+    & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 /define:GUI /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32icon:$stage\saplink.ico" "/out:$bin\saplink-gui.exe" (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GuiLauncher.cs')
     Assert-Exit 'GUI launcher compilation'
     # Loading the actual prebuilt addon catches accidental host/target architecture mixing.
     & (Join-Path $runtime 'node.exe') (Join-Path $PSScriptRoot 'native-smoke.cjs') (Join-Path $app 'node_modules\@napi-rs\keyring') $nativeDirectory
     Assert-Exit "Native module smoke check ($arch)"
-    & (Join-Path $bin 'sapmcp.exe') --version; Assert-Exit "Launcher smoke check ($arch)"
+    & (Join-Path $bin 'saplink.exe') --version; Assert-Exit "Launcher smoke check ($arch)"
 
     $receipt = @{ app_version=$package.version; node_version=$lock.nodeVersion; architecture=$arch; built_at=[DateTime]::UtcNow.ToString('o'); node_archive_sha256=$lock.node.$arch.sha256; nsis_archive_sha256=$lock.nsis.sha256; vc_runtime_version=$lock.vcRuntime.version; vc_runtime_archive_sha256=$lock.vcRuntime.$arch.sha256 }
     $receipt | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'build-info.json') -Encoding UTF8
     # NSIS packages dotfiles and empty directories too; record the same complete payload.
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($stage.Length + 1) })
     $directories = @(Get-ChildItem -LiteralPath $stage -Recurse -Directory -Force | ForEach-Object { $_.FullName.Substring($stage.Length + 1) })
-    @{ schema_version=1; app_id='org.sapmcp.desktop'; version=$package.version; architecture=$arch; files=$files; directories=$directories } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'install-manifest.json') -Encoding UTF8
+    @{ schema_version=1; app_id='org.saplink.desktop'; version=$package.version; architecture=$arch; files=$files; directories=$directories } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'install-manifest.json') -Encoding UTF8
     $suffix = if ($TestMode) { '-test' } else { '' }
-    $target = Join-Path $output "SAPMCP-$($package.version)-win-$arch$suffix-setup.exe"
+    $target = Join-Path $output "SapLink-$($package.version)-win-$arch$suffix-setup.exe"
     $arguments = @('/V2', '/INPUTCHARSET', 'UTF8', "/DAPP_VERSION=$($package.version)", "/DTARGET_ARCH=$arch", "/DSTAGE_DIR=$stage", "/DOUTPUT_FILE=$target", "/DICON_FILENAME=$iconName")
     if ($TestMode) { $arguments += '/DTEST_MODE' }
     & $compiler @arguments (Join-Path $PSScriptRoot 'installer.nsi'); Assert-Exit "Installer compilation ($arch)"

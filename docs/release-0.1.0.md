@@ -1,14 +1,16 @@
-# SAP MCP 0.1.0 Windows 发布说明
+# SapLink 0.1.0 Windows 发布说明
+
+SapLink 首个正式版本，发布日期：2026-10-17。
 
 ## 下载与安装
 
-- 普通 Intel / AMD 电脑：`SAPMCP-0.1.0-win-x64-setup.exe`。
-- Windows ARM 电脑：`SAPMCP-0.1.0-win-arm64-setup.exe`。
+- 普通 Intel / AMD 电脑：`SapLink-0.1.0-win-x64-setup.exe`。
+- Windows ARM 电脑：`SapLink-0.1.0-win-arm64-setup.exe`。
 - 对应的 `.sha256` 是完整性校验文件，普通用户只需运行 `.exe`。
 
 支持 64 位 Windows 10 1809+ / Windows 11，不支持 32 位 Windows。安装包内置 Node.js、生产依赖及应用本地 VC 运行库，安装无需联网。访问 SAP 需要相应网络和 SAP 权限。
 
-双击安装包，保留默认的 PATH 和桌面快捷方式选项。安装完成后，通过 **SAP MCP** 快捷方式打开管理界面，添加并测试 SAP 连接、创建令牌，再配置 MCP 客户端。重新打开终端后可使用 `sapmcp --help`、`sapmcp version`。
+双击安装包，保留默认的 PATH 和桌面快捷方式选项。安装完成后，通过 **SapLink** 快捷方式打开管理界面，添加并测试 SAP 连接、创建令牌，再配置 MCP 客户端。重新打开终端后可使用 `saplink --help`、`saplink version`。
 
 ## 本次发布内容
 
@@ -22,11 +24,11 @@
 
 ## 升级、退出与卸载
 
-升级或卸载前，在任务栏右下角 **SAP MCP 托盘图标 → 退出 SAP MCP 管理**。关闭浏览器页面不会退出托盘程序。后台实例使用 `sapmcp service stop --json` 正常停止，前台运行的实例在原终端按 Ctrl+C。
+升级或卸载前，在任务栏右下角 **SapLink 托盘图标 → 退出 SapLink 管理**。关闭浏览器页面不会退出托盘程序。后台实例使用 `saplink service stop --json` 正常停止，前台运行的实例在原终端按 Ctrl+C。
 
 再次运行安装包会更新原安装目录。更换位置需先卸载，再安装。安装按当前 Windows 用户管理，不是全计算机共享安装。
 
-卸载保留连接配置、令牌、日志、Windows 凭据及未登记文件。配置默认位于 `%APPDATA%\sap-mcp`，日志位于 `%LOCALAPPDATA%\sap-mcp\logs`。
+卸载保留连接配置、令牌、日志、Windows 凭据及未登记文件。配置默认位于 `%APPDATA%\saplink`，日志位于 `%LOCALAPPDATA%\saplink\logs`。
 
 ## 发布状态
 

@@ -13,11 +13,11 @@ export async function promptLocalPassword(connection: Pick<Connection, 'name' | 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'SAP MCP - 输入 SAP 密码'
+$form.Text = 'SapLink - 输入 SAP 密码'
 $form.Width = 440; $form.Height = 230
 $form.StartPosition = 'CenterScreen'; $form.TopMost = $true
 $label = New-Object System.Windows.Forms.Label
-$label.Text = $env:SAP_MCP_PROMPT_NAME + [Environment]::NewLine + $env:SAP_MCP_PROMPT_SERVER + [Environment]::NewLine + 'Client: ' + $env:SAP_MCP_PROMPT_CLIENT + '  User: ' + $env:SAP_MCP_PROMPT_USER
+$label.Text = $env:SAPLINK_PROMPT_NAME + [Environment]::NewLine + $env:SAPLINK_PROMPT_SERVER + [Environment]::NewLine + 'Client: ' + $env:SAPLINK_PROMPT_CLIENT + '  User: ' + $env:SAPLINK_PROMPT_USER
 $label.SetBounds(15, 15, 395, 65)
 $field = New-Object System.Windows.Forms.TextBox
 $field.UseSystemPasswordChar = $true; $field.MaxLength = 512
@@ -39,8 +39,8 @@ try {
   try {
     const result = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-Command', script],
       { windowsHide: true, cwd: process.env.SystemRoot ?? 'C:\\Windows', timeout: 300000, maxBuffer: 8192, encoding: 'utf8',
-        env: { ...process.env, SAP_MCP_PROMPT_NAME: connection.name, SAP_MCP_PROMPT_SERVER: connection.base_url,
-          SAP_MCP_PROMPT_CLIENT: connection.client, SAP_MCP_PROMPT_USER: connection.username } });
+        env: { ...process.env, SAPLINK_PROMPT_NAME: connection.name, SAPLINK_PROMPT_SERVER: connection.base_url,
+          SAPLINK_PROMPT_CLIENT: connection.client, SAPLINK_PROMPT_USER: connection.username } });
     if (!result.stdout) throw new AppError('PASSWORD_REQUIRED', 'Password cannot be empty.');
     return result.stdout;
   } catch (error) {

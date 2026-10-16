@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { acquireLease, type LeaseOwner } from '../src/lease.js';
 
 async function fixture(action: (directory: string, path: string) => Promise<void>) {
-  const root = join(process.cwd(), '.sap-mcp', 'tests');
+  const root = join(process.cwd(), '.saplink', 'tests');
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'lease-'));
   try { await action(directory, join(directory, 'runtime.lock')); }

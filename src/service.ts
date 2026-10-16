@@ -101,11 +101,11 @@ async function start(directory: string, port: number): Promise<ServiceStatus> {
   // The installed Windows launcher creates the daemon without inheriting any
   // terminal handles. Older Node/libuv versions can otherwise keep an AI
   // client's output pipe open even with detached:true and stdio:'ignore'.
-  const launcher = process.platform === 'win32' ? process.env.SAP_MCP_WINDOWS_LAUNCHER : undefined;
+  const launcher = process.platform === 'win32' ? process.env.SAPLINK_WINDOWS_LAUNCHER : undefined;
   const child = spawn(launcher ?? process.execPath,
     launcher ? ['--internal-service-run', String(port)] : [cliPath, 'service', '_run', '--port', String(port)], {
     detached: true, windowsHide: true, stdio: 'ignore',
-    env: { ...process.env, SAP_MCP_CONFIG_DIR: directory, SAP_MCP_STARTUP_ID: instanceId }
+    env: { ...process.env, SAPLINK_CONFIG_DIR: directory, SAPLINK_STARTUP_ID: instanceId }
   });
   let spawnFailed = false;
   child.once('error', () => { spawnFailed = true; });
@@ -193,7 +193,7 @@ export function restartService(directory: string, port?: number) {
 }
 
 export async function runManagedService(store: ConfigStore, credentials: Credentials, port: number) {
-  const instanceId = z.string().uuid().parse(process.env.SAP_MCP_STARTUP_ID);
+  const instanceId = z.string().uuid().parse(process.env.SAPLINK_STARTUP_ID);
   const release = await acquireLease(store.directory, 'runtime.lock');
   let runtime: Awaited<ReturnType<typeof startHttp>> | undefined;
   let controlServer: ReturnType<typeof createServer> | undefined;
@@ -263,7 +263,7 @@ export async function runManagedService(store: ConfigStore, credentials: Credent
 }
 
 export async function reportStartupFailure(directory: string, error: unknown) {
-  const id = z.string().uuid().safeParse(process.env.SAP_MCP_STARTUP_ID);
+  const id = z.string().uuid().safeParse(process.env.SAPLINK_STARTUP_ID);
   if (!id.success) return;
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `service-start-${id.data}.json`), JSON.stringify(cliFailure(error)), { mode: 0o600 });

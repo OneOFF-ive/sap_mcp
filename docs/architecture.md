@@ -1,6 +1,6 @@
-# SAP MCP 架构
+# SapLink 架构
 
-本文说明 SAP MCP 0.1.0 的模块、接口和操作流程。安装与使用步骤见 [README](../README.md)。
+本文说明 SapLink 0.1.0 的模块、接口和操作流程。产品介绍见 [README](../README.md)，安装与使用步骤见 [部署与运维手册](operations.md)。CLI 入口和包名为 saplink；配置目录、凭据服务名、环境变量和安装登记标识见[命名与本地数据](local-data.md)。
 
 文档核对日期：2026-10-15。客户端操作见 [MCP 客户端手册](mcp-client-guide.md)，部署与排障见 [运维手册](operations.md)。本文描述实现，不表示所有功能已在每个 SAP 版本验证。
 
@@ -85,7 +85,7 @@ flowchart LR
 
 SAP 连接支持 HTTP/HTTPS ADT。`base_url` 不含用户名、密码、查询参数和 fragment；CLI 可接受末尾 `/sap/bc/adt` 并规范化，其他自定义反向代理路径暂不支持。端口由用户填写，不根据系统号推算。
 
-配置存放在 `%APPDATA%\sap-mcp\config.json`，含 `schema_version=1`，可由 `SAP_MCP_CONFIG_DIR` 覆盖。连接没有 credential_ref 字段，直接按 connection_id 访问 Windows 凭据管理器。配置更新采用临时文件加 rename；删除连接时清理凭据。CLI 使用 runtime.lock 禁止服务运行期间添加、编辑或删除连接，config.lock 串行化配置变更；服务运行时可管理令牌。
+配置存放在 `%APPDATA%\saplink\config.json`，含 `schema_version=1`，可由 `SAPLINK_CONFIG_DIR` 覆盖。连接没有 credential_ref 字段，直接按 connection_id 访问 Windows 凭据管理器。配置更新采用临时文件加 rename；删除连接时清理凭据。CLI 使用 runtime.lock 禁止服务运行期间添加、编辑或删除连接，config.lock 串行化配置变更；服务运行时可管理令牌。
 
 UI 进程同样持有 runtime.lock，避免另一个 CLI 服务同时操作该配置目录。Web 管理操作串行化并使用 config.lock；MCP 已停止时可在 UI 内变更连接。编辑时变更 URL、Client 或用户名必须重新输入密码，保存失败时尽力恢复原凭据。
 
@@ -93,21 +93,21 @@ HTTP Basic 凭据和代码流量没有 TLS 加密，应在可信网络内使用�
 
 ## 4. CLI 设计
 
-以下命令已实现；实际执行方式和环境要求见项目 README。
+以下命令已实现；实际执行方式和环境要求见 [部署与运维手册](operations.md) 和 [AI 终端管理](ai-management.md)。
 
 表中的 `<连接名称>`、`<令牌ID>` 为占位符，执行前替换为实际值，不保留尖括号。连接名称由用户定义，不是命令的固定部分。项目内可使用 `npm start -- connection add <连接名称>` 等方式执行。
 
 | 命令 | 行为 |
 | --- | --- |
-| `sap-mcp connection add <连接名称>` | 交互填写连接，隐藏输入密码 |
-| `sap-mcp connection list` | 列出 ID、名称、URL、Client、用户名及写入开关，不登录系统 |
-| `sap-mcp connection edit <连接名称>` | 修改配置或更新凭据 |
-| `sap-mcp connection remove <连接名称>` | 删除配置和关联凭据 |
-| `sap-mcp connection test <连接名称>` | 验证网络、登录、discovery 和后端能力 |
-| `sap-mcp token create` | 生成高熵 MCP 令牌，明文仅输出一次 |
-| `sap-mcp token revoke <令牌ID>` | 撤销指定令牌 |
-| `sap-mcp serve --port 8765` | 前台启动服务，固定监听 127.0.0.1 |
-| `sap-mcp ui --port 8766` | 启动管理界面并打开默认浏览器，MCP 由页面控制启停 |
+| `saplink connection add <连接名称>` | 交互填写连接，隐藏输入密码 |
+| `saplink connection list` | 列出 ID、名称、URL、Client、用户名及写入开关，不登录系统 |
+| `saplink connection edit <连接名称>` | 修改配置或更新凭据 |
+| `saplink connection remove <连接名称>` | 删除配置和关联凭据 |
+| `saplink connection test <连接名称>` | 验证网络、登录、discovery 和后端能力 |
+| `saplink token create` | 生成高熵 MCP 令牌，明文仅输出一次 |
+| `saplink token revoke <令牌ID>` | 撤销指定令牌 |
+| `saplink serve --port 8765` | 前台启动服务，固定监听 127.0.0.1 |
+| `saplink ui --port 8766` | 启动管理界面并打开默认浏览器，MCP 由页面控制启停 |
 
 连接测试按唯一名称选取配置，登录并输出 discovery 和探测时间，结束后退出会话。它是只读操作，不通过创建程序测试权限。错误分类以当前 errors.ts 为准，不把所有 HTTP 403 都解释为权限不足。成功读取不代表具有写入权限。
 
@@ -262,7 +262,7 @@ create_transport_request 是写操作，复用连接 write_enabled、串行队�
 
 ## 10. 本地数据与操作记录
 
-非敏感连接配置为 JSON；写操作记录使用 JSONL 文件，不引入数据库。目录为 `%LOCALAPPDATA%\sap-mcp\logs`，可由 SAP_MCP_LOG_DIR 覆盖。每行一个 UTF-8 JSON 对象，阶段事件追加写入，不修改旧行。实际字段包括 schema_version、time（UTC）、operation_id、request_id、connection_id、event、completed_steps，以及可用的 tool、object_uri 或 error_code；当前不写前后 revision。创建和批量激活事件未逐项记录目标 URI，应结合返回结果核实。
+非敏感连接配置为 JSON；写操作记录使用 JSONL 文件，不引入数据库。目录为 `%LOCALAPPDATA%\saplink\logs`，可由 SAPLINK_LOG_DIR 覆盖。每行一个 UTF-8 JSON 对象，阶段事件追加写入，不修改旧行。实际字段包括 schema_version、time（UTC）、operation_id、request_id、connection_id、event、completed_steps，以及可用的 tool、object_uri 或 error_code；当前不写前后 revision。创建和批量激活事件未逐项记录目标 URI，应结合返回结果核实。
 
 日志由单一队列串行写入，按 UTC 日期和约 5 MiB 大小轮转，不自动删除历史文件。当前没有日志读取或重放命令；人工或外部工具读取时需处理异常退出留下的不完整末行。首个写操作事件无法记录时，在 SAP 写请求前返回日志错误；SAP 已执行后日志失败通过 LOG_WRITE_FAILED warning 返回，不覆盖已知 SAP 状态。
 
@@ -274,7 +274,7 @@ JSONL 用于排查问题和人工核实操作阶段，不作为 SAP 状态的权
 
 ### 自动化测试
 
-模拟测试覆盖 URL 与 URI 校验、MCP HTTP 客户端、认证与令牌撤销、ADT cookie/CSRF、源码读写、检查和激活、对象类型过滤、分类节点过滤、旧配置兼容、重复请求、版本冲突、传输任务要求、日志失败、锁清理和退出等待。运行方式：`npm test`。
+模拟测试覆盖 URL 与 URI 校验、MCP HTTP 客户端、认证与令牌撤销、ADT cookie/CSRF、源码读写、检查和激活、对象类型过滤、分类节点过滤、配置校验、重复请求、版本冲突、传输任务要求、日志失败、锁清理和退出等待。运行方式：`npm test`。
 
 ### SAP 环境验证
 

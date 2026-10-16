@@ -10,7 +10,7 @@ import { writeTools } from './tool-policy.js';
 
 export function makeMcp(operations: Operations) {
   const server = new McpServer({
-    name: 'sap-mcp',
+    name: 'saplink',
     version: '0.1.0'
   }, {
     instructions: clientInstructions,

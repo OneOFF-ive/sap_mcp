@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const icons = () => window.lucide?.createIcons();
-const sessionKey = 'sap-mcp-admin-session';
+const sessionKey = 'saplink-admin-session';
 const freshKey = location.hash.slice(1);
 if (freshKey) { sessionStorage.setItem(sessionKey, freshKey); history.replaceState(null, '', '/'); }
 const adminKey = sessionStorage.getItem(sessionKey);
