@@ -6,6 +6,7 @@ SetCompressor /SOLID zlib
 !include "WinVer.nsh"
 !include "x64.nsh"
 !include "FileFunc.nsh"
+!include "WinMessages.nsh"
 
 !ifndef APP_VERSION
   !error "APP_VERSION is required"
@@ -47,6 +48,7 @@ VIAddVersionKey "LegalCopyright" "SAP MCP project"
 !define MUI_FINISHPAGE_TEXT "安装完成。请重新打开终端后使用 sapmcp 命令。$\r$\n$\r$\n图形界面启动后可从系统托盘重新打开或正常退出。卸载时保留连接配置、日志和 Windows 凭据。"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW ShowInstallDirectory
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -57,6 +59,25 @@ VIAddVersionKey "LegalCopyright" "SAP MCP project"
 
 Var StartMenuDirectory
 Var DesktopShortcut
+Var ExistingInstallDirectory
+
+Function ReadExistingInstallation
+  ReadRegStr $ExistingInstallDirectory HKCU "${PRODUCT_KEY}" "InstallDir"
+  ${If} $ExistingInstallDirectory == ""
+    ReadRegStr $ExistingInstallDirectory HKCU "${UNINSTALL_KEY}" "InstallLocation"
+  ${EndIf}
+FunctionEnd
+
+Function ShowInstallDirectory
+  ${If} $ExistingInstallDirectory != ""
+    StrCpy $INSTDIR $ExistingInstallDirectory
+    !insertmacro MUI_HEADER_TEXT "升级 / 修复 SAP MCP" "已检测到当前用户的安装，将更新原目录中的程序。"
+    SendMessage $mui.DirectoryPage.Text ${WM_SETTEXT} 0 "STR:已安装 SAP MCP。重复安装将升级或修复原有程序，不允许安装第二份。$\r$\n如需更换安装位置，请先卸载旧版本；连接配置和凭据会保留。"
+    SendMessage $mui.DirectoryPage.Directory ${WM_SETTEXT} 0 "STR:$ExistingInstallDirectory"
+    SendMessage $mui.DirectoryPage.Directory ${EM_SETREADONLY} 1 0
+    EnableWindow $mui.DirectoryPage.BrowseButton 0
+  ${EndIf}
+FunctionEnd
 
 Function .onInit
   ${IfNot} ${AtLeastWin10}
@@ -81,14 +102,25 @@ Function .onInit
       Abort
     ${EndIf}
   !endif
+  Call ReadExistingInstallation
+  ${If} $ExistingInstallDirectory != ""
+    ${If} $INSTDIR != $ExistingInstallDirectory
+      MessageBox MB_ICONSTOP "已安装 SAP MCP：$\r$\n$ExistingInstallDirectory$\r$\n$\r$\n只能在原目录升级或修复。更换目录前请先卸载旧版本；连接配置和凭据会保留。" /SD IDOK
+      SetErrorLevel 15
+      Abort
+    ${EndIf}
+    StrCpy $INSTDIR $ExistingInstallDirectory
+  ${EndIf}
 FunctionEnd
 
 Section "SAP MCP 主程序（内置 Node.js，离线安装）" Core
   SectionIn RO
-  ReadRegStr $0 HKCU "${PRODUCT_KEY}" "InstallDir"
-  ${If} $0 != ""
-  ${AndIf} $0 != $INSTDIR
+  ; Recheck immediately before writing, including installations registered since initialization.
+  Call ReadExistingInstallation
+  ${If} $ExistingInstallDirectory != ""
+  ${AndIf} $ExistingInstallDirectory != $INSTDIR
     MessageBox MB_ICONSTOP "更改安装目录前请先卸载旧版本；连接配置和凭据会保留。" /SD IDOK
+    SetErrorLevel 15
     Abort
   ${EndIf}
   InitPluginsDir

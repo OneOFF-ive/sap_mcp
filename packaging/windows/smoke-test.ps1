@@ -4,7 +4,9 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $stage = Join-Path $repository ('.sap-mcp\installer-build\stage-' + $Architecture)
 $compiler = Join-Path $repository '.sap-mcp\installer-cache\nsis-3.12\makensis.exe'
 $version = (Get-Content (Join-Path $repository 'package.json') -Raw | ConvertFrom-Json).version
-$installer = Join-Path $repository "outputs\installers\SAPMCP-$version-win-$Architecture-test-setup.exe"
+$testOutput = Join-Path $repository '.sap-mcp\installer-build\tests'
+New-Item -ItemType Directory -Path $testOutput -Force | Out-Null
+$installer = Join-Path $testOutput "SAPMCP-$version-win-$Architecture-test-setup.exe"
 $iconName = 'sapmcp-' + (Get-FileHash -LiteralPath (Join-Path $stage 'sapmcp.ico')).Hash.Substring(0,12).ToLowerInvariant() + '.ico'
 & $compiler /V2 /INPUTCHARSET UTF8 "/DAPP_VERSION=$version" "/DTARGET_ARCH=$Architecture" "/DSTAGE_DIR=$stage" "/DOUTPUT_FILE=$installer" "/DICON_FILENAME=$iconName" /DTEST_MODE (Join-Path $PSScriptRoot 'installer.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Test installer compilation failed.' }
@@ -32,9 +34,9 @@ $environment = $registry.CreateSubKey($keyName + '\Environment')
 $environment.SetValue('Path', $originalTestPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
 $environment.Dispose()
 
-function Run-Installer {
+function Run-Installer([string]$Directory = $install) {
   Write-Host "Running isolated installer at $([DateTime]::Now.ToString('T'))"
-  $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$install" -WindowStyle Hidden -Wait -PassThru
+  $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$Directory" -WindowStyle Hidden -Wait -PassThru
   return $process.ExitCode
 }
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
@@ -51,6 +53,14 @@ try {
   [IO.File]::WriteAllText((Join-Path $config 'runtime.lock'), $staleRecord, [Text.UTF8Encoding]::new($false))
   Write-Host "Installing ($Architecture) into $install"
   Assert-True ((Run-Installer) -eq 0) 'Silent install failed.'
+  $secondInstall = Join-Path $testRoot 'second application copy'
+  $manifestHash = (Get-FileHash -LiteralPath (Join-Path $install 'install-manifest.json')).Hash
+  Assert-True ((Run-Installer -Directory $secondInstall) -eq 15) 'A second installation directory was not rejected.'
+  Assert-True (!(Test-Path -LiteralPath $secondInstall)) 'Rejected installation created a second application directory.'
+  Assert-True ((Get-FileHash -LiteralPath (Join-Path $install 'install-manifest.json')).Hash -eq $manifestHash) 'Rejected installation changed the original payload.'
+  $registered = $registry.OpenSubKey($keyName)
+  try { Assert-True ($registered.GetValue('InstallDir') -eq $install) 'Rejected installation changed the registered directory.' }
+  finally { $registered.Dispose() }
   $environment = $registry.OpenSubKey($keyName + '\Environment')
   $installedPath = $environment.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
   Assert-True ($installedPath -eq ($originalTestPath + ';' + (Join-Path $install 'bin'))) 'PATH content or variable expansion was changed incorrectly.'

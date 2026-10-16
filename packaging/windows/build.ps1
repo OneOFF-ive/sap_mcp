@@ -8,6 +8,7 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $buildRoot = Join-Path $repository '.sap-mcp\installer-build'
 $cache = Join-Path $repository '.sap-mcp\installer-cache'
 $output = Join-Path $repository 'outputs\installers'
+if ($TestMode) { $output = Join-Path $buildRoot 'tests' }
 New-Item -ItemType Directory -Force -Path $buildRoot,$cache,$output | Out-Null
 $lock = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'download-lock.json') -Raw | ConvertFrom-Json
 $package = Get-Content -LiteralPath (Join-Path $repository 'package.json') -Raw | ConvertFrom-Json
@@ -146,11 +147,6 @@ try {
     & $compiler @arguments (Join-Path $PSScriptRoot 'installer.nsi'); Assert-Exit "Installer compilation ($arch)"
     $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([IO.Path]::GetFileName($target))" | Set-Content -LiteralPath ($target + '.sha256') -Encoding ASCII
-    # Prefer this name for distribution: Explorer cannot reuse an older artwork's path cache.
-    $displayTarget = Join-Path $output "SAPMCP-$($package.version)-win-$arch$suffix-icon-$iconHash-setup.exe"
-    Copy-Item -LiteralPath $target -Destination $displayTarget -Force
-    "$hash  $([IO.Path]::GetFileName($displayTarget))" | Set-Content -LiteralPath ($displayTarget + '.sha256') -Encoding ASCII
     Write-Host "Created: $target"
-    Write-Host "Distribution copy: $displayTarget"
   }
 } finally { Pop-Location }
