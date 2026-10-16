@@ -17,7 +17,11 @@ async function api(path, method = 'GET', data) {
     ...(data === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: data === undefined ? undefined : JSON.stringify(data) });
   if (response.status === 401) { $('#locked').hidden = false; throw new Error('管理会话已失效，请重新启动管理窗口'); }
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error?.message ?? `请求失败 (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(result.error?.message ?? `请求失败 (${response.status})`);
+    error.fields = result.error?.fields ?? [];
+    throw error;
+  }
   return result;
 }
 function element(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text;
@@ -83,6 +87,10 @@ async function act(action, message = '操作完成') {
 function openConnection(connection) {
   editing = connection;
   const form = $('#connection-form'); form.reset(); $('#form-error').textContent = '';
+  for (const control of form.elements) {
+    control.setCustomValidity?.('');
+    control.removeAttribute('aria-invalid');
+  }
   $('#form-title').textContent = connection ? '编辑连接' : '添加连接';
   const values = connection ?? { name: '', base_url: '', client: '100', username: '', language: 'EN', write_enabled: false };
   for (const key of ['name', 'base_url', 'client', 'username', 'language']) {
@@ -104,7 +112,23 @@ async function testConnection(c) {
   const result = await act(() => api(`connections/${c.connection_id}/test`, 'POST'), null);
   tests.set(c.connection_id, result ? { label: '连接成功', kind: 'success' } : { label: '连接失败', kind: 'error' }); render();
 }
-$('#connection-form').onsubmit = async event => {
+const connectionForm = $('#connection-form');
+for (const control of connectionForm.querySelectorAll('input, select')) {
+  control.addEventListener('input', () => {
+    control.setCustomValidity('');
+    control.removeAttribute('aria-invalid');
+    $('#form-error').textContent = '';
+  });
+  control.addEventListener('invalid', () => {
+    const hint = document.getElementById(control.getAttribute('aria-describedby'));
+    const message = hint?.textContent ?? control.dataset.formatMessage ?? control.validationMessage;
+    control.setCustomValidity(message);
+    control.setAttribute('aria-invalid', 'true');
+    $('#form-error').textContent = message;
+  });
+}
+
+connectionForm.onsubmit = async event => {
   event.preventDefault(); if (working) return;
   const form = event.currentTarget; const fields = Object.fromEntries(new FormData(form));
   const data = { name: fields.name, base_url: fields.base_url, client: fields.client, username: fields.username,
@@ -113,7 +137,18 @@ $('#connection-form').onsubmit = async event => {
   working = true; render(); form.querySelector('[type=submit]').disabled = true;
   try { await api(editing ? `connections/${editing.connection_id}` : 'connections', editing ? 'PUT' : 'POST', data);
     if (editing) tests.delete(editing.connection_id); $('#connection-dialog').close(); await refresh(); toast('连接已保存'); }
-  catch (error) { $('#form-error').textContent = error.message; }
+  catch (error) {
+    $('#form-error').textContent = error.message;
+    let firstInvalidControl;
+    for (const field of error.fields ?? []) {
+      const control = form.elements.namedItem(field.field);
+      if (!control?.setCustomValidity) continue;
+      control.setCustomValidity(field.message);
+      control.setAttribute('aria-invalid', 'true');
+      firstInvalidControl ??= control;
+    }
+    firstInvalidControl?.focus();
+  }
   finally { form.elements.password.value = ''; working = false; form.querySelector('[type=submit]').disabled = false; render(); }
 };
 for (const node of document.querySelectorAll('.close-dialog')) node.onclick = () => {

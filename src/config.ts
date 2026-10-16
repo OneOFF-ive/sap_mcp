@@ -5,10 +5,27 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { z } from 'zod';
 import { AppError } from './errors.js';
 
+export const connectionFieldHints: Record<string, string> = {
+  name: '连接名称仅允许英文字母、数字、下划线（_）和连字符（-），不允许中文、空格、点号或斜杠。例如 sap_system_01。',
+  base_url: 'ADT 地址必须是 http:// 或 https:// 开头的服务器地址，例如 https://sap-host:443；路径只能为空、/ 或 /sap/bc/adt，不允许内嵌用户名密码、查询参数或 # 片段。',
+  client: 'Client 必须是 3 位半角数字，例如 001 或 100；请保留前导零。',
+  username: 'SAP 用户名不能为空，请填写 SAP 登录用户名。',
+  language: '语言必须是 2 位大写英文字母，例如 EN、ZH 或 DE。',
+  password: 'SAP 密码必须为文本，最多 512 个字符。',
+  write_enabled: '允许程序写入必须为开启或关闭。'
+};
+
 export const connectionSchema = z.object({
   connection_id: z.string().uuid(),
   name: z.string().regex(/^[a-zA-Z0-9_-]+$/),
-  base_url: z.string().transform(normalizeUrl),
+  base_url: z.string().transform((value, context) => {
+    try {
+      return normalizeUrl(value);
+    } catch {
+      context.addIssue({ code: 'custom', message: connectionFieldHints.base_url });
+      return z.NEVER;
+    }
+  }),
   client: z.string().regex(/^\d{3}$/),
   username: z.string().min(1),
   language: z.string().regex(/^[A-Z]{2}$/),

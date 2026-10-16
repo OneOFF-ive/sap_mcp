@@ -38,6 +38,28 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.equal((await fetch(`${origin}/api/state`, { headers: { 'X-Admin-Token': key, Origin: 'http://evil.test' } })).status, 403);
     assert.equal((await fetch(`${origin}/api/tokens`, { method: 'POST', headers: { 'X-Admin-Token': key } })).status, 403);
     const draft = { name: 'test_system', base_url: 'http://sap.test:8000', client: '001', username: 'TEST', language: 'EN', write_enabled: false, password: 'synthetic-secret' };
+    for (const name of ['中文系统', 'sap system', 'sap.system', 'sap/system']) {
+      const invalid = await api('connections', 'POST', { ...draft, name });
+      assert.equal(invalid.status, 400);
+      assert.equal(invalid.body.error.code, 'INVALID_INPUT');
+      assert.equal(invalid.body.error.fields[0].field, 'name');
+      assert.ok(invalid.body.error.message.includes('下划线'));
+      assert.ok(invalid.body.error.message.includes('sap_system_01'));
+      assert.equal(JSON.stringify(invalid.body).includes('synthetic-secret'), false);
+    }
+    for (const base_url of ['not-a-url', 'ftp://sap.test', 'http://sap.test/other',
+      'https://user:URL_SECRET@sap.test', 'http://sap.test?password=URL_SECRET', 'http://sap.test/#fragment']) {
+      const invalid = await api('connections', 'POST', { ...draft, base_url });
+      assert.equal(invalid.body.error.code, 'INVALID_INPUT');
+      assert.equal(invalid.body.error.fields[0].field, 'base_url');
+      assert.ok(invalid.body.error.message.includes('https://sap-host:443'));
+      assert.equal(JSON.stringify(invalid.body).includes('URL_SECRET'), false);
+    }
+    const invalidFields = await api('connections', 'POST', { ...draft, client: '01', language: 'en' });
+    assert.deepEqual(invalidFields.body.error.fields.map(field => field.field), ['client', 'language']);
+    assert.ok(invalidFields.body.error.message.includes('3 位半角数字'));
+    assert.ok(invalidFields.body.error.message.includes('2 位大写英文字母'));
+    assert.equal(passwords.size, 0);
     const initial = await store.load();
     await writeFile(join(directory, 'config.json'), JSON.stringify({ ...initial, connections: [{ ...draft,
       password: undefined, connection_id: '01234567-89ab-4def-8123-456789abcdef', allowed_packages: ['$TMP'] }] }));
@@ -48,6 +70,8 @@ test('local web management protects APIs and manages connections, credentials, t
     await store.save(initial);
     const created = await api('connections', 'POST', draft); assert.equal(created.status, 200);
     const id = created.body.connection_id; assert.ok(id); assert.equal(created.body.password, undefined);
+    const invalidEdit = await api(`connections/${id}`, 'PUT', { ...draft, name: 'bad.name' });
+    assert.equal(invalidEdit.body.error.fields[0].field, 'name');
     assert.equal(passwords.get(id), draft.password);
     assert.equal((await api('connections', 'POST', draft)).status, 400);
     assert.equal((await api(`connections/${id}/test`, 'POST')).body.success, true); assert.equal(probes, 1);

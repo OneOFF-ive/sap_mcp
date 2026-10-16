@@ -2,7 +2,7 @@ import express from 'express';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { connectionSchema, type ConfigStore, type Credentials } from './config.js';
+import { connectionSchema, connectionFieldHints, type ConfigStore, type Credentials } from './config.js';
 import { AdtBackend } from './adt.js';
 import { Operations } from './operations.js';
 import { startHttp } from './server.js';
@@ -10,15 +10,22 @@ import { acquireLease } from './lease.js';
 import { safeError, AppError } from './errors.js';
 import type { BackendFactory } from './operations.js';
 
-const draft = z.object({
-  name: z.string().regex(/^[a-zA-Z0-9_-]+$/),
-  base_url: z.string(),
-  client: z.string(),
-  username: z.string().min(1),
-  language: z.string(),
+const draft = connectionSchema.omit({ connection_id: true }).extend({
   write_enabled: z.boolean(),
   password: z.string().max(512).optional()
 }).strict();
+
+function validationResponse(error: z.ZodError) {
+  const fields = [...new Set(error.issues.map(issue => String(issue.path[0] ?? '')))]
+    .filter(field => Object.hasOwn(connectionFieldHints, field))
+    .map(field => ({ field, message: connectionFieldHints[field] }));
+  const message = fields.length
+    ? fields.map(field => field.message).join('\n')
+    : error.issues.some(issue => issue.path[0] === 'port')
+      ? '端口必须是 1～65535 之间的整数，例如 8765。'
+      : '请求参数格式不正确，或包含不支持的字段，请检查后重试。';
+  return { code: 'INVALID_INPUT', message, fields };
+}
 
 export async function startAdmin(store: ConfigStore, credentials: Credentials, port = 8766, factory: BackendFactory = (c, p) => new AdtBackend(c, p)) {
   const key = randomBytes(32).toString('base64url');
@@ -256,10 +263,7 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
       code: error.code,
       message: error.message
     }
-      : error instanceof z.ZodError ? {
-        code: 'INVALID_INPUT',
-        message: '请检查连接名称、HTTP/HTTPS 地址、Client 和语言格式'
-      }
+      : error instanceof z.ZodError ? validationResponse(error)
         : {
           code: safeError(error).code,
           message: '操作失败，请检查连接信息、凭据或端口占用情况'

@@ -22,7 +22,25 @@ try {
   await page.getByRole('button', { name: '添加连接', exact: true }).first().click();
   await page.locator('[name=name]').fill('sap_system_01'); await page.locator('[name=base_url]').fill('http://sap.example:8000');
   await page.locator('[name=client]').fill('001'); await page.locator('[name=username]').fill('CONSULTANT');
-  await page.locator('[name=password]').fill('synthetic-only'); await page.getByRole('button', { name: '保存连接', exact: true }).click();
+  await page.locator('[name=password]').fill('synthetic-only');
+  for (const name of ['bad.name', 'sap system', '中文系统']) {
+    await page.locator('[name=name]').fill(name);
+    await page.getByRole('button', { name: '保存连接', exact: true }).click();
+    assert.ok((await page.locator('#form-error').textContent()).includes('不允许'));
+    assert.equal(await page.locator('[name=name]').getAttribute('aria-invalid'), 'true');
+    assert.equal(await page.locator('#connection-dialog').isVisible(), true);
+  }
+  await page.screenshot({ path: join(root, 'connection-validation.png'), fullPage: true });
+  await page.locator('[name=name]').fill('sap_system_01');
+  await page.locator('[name=base_url]').fill('http://sap.example:8000/unsupported');
+  await page.getByRole('button', { name: '保存连接', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#form-error').textContent.includes('ADT 地址必须'));
+  assert.equal(await page.locator('[name=base_url]').getAttribute('aria-invalid'), 'true');
+  assert.equal(await page.locator('[name=base_url]').evaluate(node => node === document.activeElement), true);
+  assert.equal(await page.locator('[name=password]').inputValue(), '');
+  await page.locator('[name=base_url]').fill('http://sap.example:8000');
+  await page.locator('[name=password]').fill('synthetic-only');
+  await page.getByRole('button', { name: '保存连接', exact: true }).click();
   await page.locator('#connection-rows strong').filter({ hasText: 'sap_system_01' }).waitFor();
   await page.getByRole('button', { name: '测试连接', exact: true }).click();
   await page.getByText('连接成功', { exact: true }).waitFor();
