@@ -48,6 +48,12 @@ function renderUpdate() {
     link.href = state.update.release_url;
     link.target = '_blank'; link.rel = 'noopener noreferrer';
     updateNotice.append(link);
+    for (const download of state.update.downloads ?? []) {
+      const downloadLink = element('a', `Windows ${download.architecture} 国内下载`);
+      downloadLink.href = download.url;
+      downloadLink.target = '_blank'; downloadLink.rel = 'noopener noreferrer';
+      updateNotice.append(document.createTextNode(' · '), downloadLink);
+    }
   }
 }
 function render() {

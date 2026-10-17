@@ -59,7 +59,7 @@ saplink service restart --json
 ## 检查新版本
 
 检查新版本使用 `saplink update check`，机器可读结果使用 `saplink update check --json`。
-命令查询 GitHub 仓库 `OneOFF-ive/saplink` 的最新正式 Release，显示当前版本、最新版本和发布下载页面；不下载、不安装，也不停止 SAP 服务。
+命令优先读取 COS 的 `saplink/latest.json`，网络、404 或元数据无效时回退到 GitHub 仓库 `OneOFF-ive/saplink` 的最新正式 Release，显示当前版本、来源及发布下载地址；不下载、不安装，也不停止 SAP 服务。
 检查结果在配置目录的 `update-check.json` 中缓存 24 小时，使用 `saplink update check --force` 立即重新查询。
 网络失败或 GitHub 限流会报告检查失败，不影响正在运行的服务。没有公开正式 Release（包括仓库为私有的情况）时会明确提示，不能据此判断已是最新版。
 `ui`、`serve` 和托管后台服务在启动成功后异步检查，之后每 24 小时检查一次，复用上述缓存。程序未运行时不会检查，不创建系统计划任务。新版本在管理页面底部显示下载链接（页面可见时每分钟刷新状态），前台服务通过 stderr 提示；新版本通知同时保存到配置目录的 `update-notice.json`，后台服务不弹 Windows 通知。同一进程对同一个新版本只输出一次提示。失败或无更新时保持安静，不阻止启动或 SAP 操作，下一个周期再试。
@@ -151,3 +151,5 @@ saplink connection test dev --json
 将 dev 替换为实际连接名。doctor 默认只检查本地环境；只有连接测试会访问相应 SAP 系统。诊断结果同时检查进程退出码及 data.healthy，不能只看 status。
 
 随后由客户端验证搜索和源码读取。需要验证写入时，使用明确指定的测试对象和包，按 [客户端手册](mcp-client-guide.md) 完成保存、语法检查、激活和读回，不使用生产变更测试连通性。
+
+双源配置与上传顺序见 [COS 发布流程](development.md#cos-双更新源发布)。默认 COS 地址为 `https://saplink-1302377695.cos.ap-shanghai.myqcloud.com/saplink/latest.json`；`SAPLINK_UPDATE_URL` 可设为自有 HTTPS 清单，或 `github` 仅用 GitHub。缓存按配置的清单 URL 隔离，COS 正常时不额外查询 GitHub。结果新增 `source`（cos/github）与 `downloads`（architecture、url、sha256），管理页面及 CLI 提供按架构的直达链接；未知最新版本仍不可解释为已是最新版。

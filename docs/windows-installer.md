@@ -39,7 +39,7 @@
 
 应用和服务启动后自动检查正式版，运行期间每 24 小时再检查，复用 24 小时缓存。管理页面发现更新后显示下载链接；没有自动安装或强制检查按钮。可在终端执行 `saplink update check` 手动检查，需要立即刷新时使用 `--force`。检查不停止应用、不下载或安装文件；设置 `SAPLINK_AUTO_UPDATE_CHECK=0` 并重启可关闭自动检查。
 
-检查需要联网访问 GitHub，不影响离线安装和已有 SAP 服务。没有公开正式版或网络检查失败时不能判断已是最新版。旧版本不支持该命令时，直接查看 [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases)，按本机架构选择安装包。
+检查需要联网访问 COS 或 GitHub，不影响离线安装和已有 SAP 服务。没有公开正式版或网络检查失败时不能判断已是最新版。旧版本不支持该命令时，直接查看 [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases)，按本机架构选择安装包。
 
 1. 先通过托盘菜单退出应用；如果使用命令行启动服务，按 [运维手册](operations.md) 正常停止。
 2. 运行新安装包，按向导在原位置升级或修复。

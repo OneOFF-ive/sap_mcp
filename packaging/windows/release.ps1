@@ -22,7 +22,7 @@ $lockPath = Join-Path $repository 'package-lock.json'
 $buildScript = Join-Path $PSScriptRoot 'build.ps1'
 $npmCli = Join-Path (Split-Path -Parent (Get-Command npm.cmd -ErrorAction Stop).Source) 'node_modules\npm\bin\npm-cli.js'
 [void](Get-Command node -ErrorAction Stop)
-foreach ($path in @($packagePath, $lockPath, $buildScript, $npmCli)) {
+foreach ($path in @($packagePath, $lockPath, $buildScript, $npmCli, (Join-Path $repository 'scripts\create-update-manifest.mjs'))) {
   if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required file not found: $path" }
 }
 
@@ -51,7 +51,10 @@ try {
       throw "Installer checksum mismatch: $arch"
     }
   }
+  & node (Join-Path $repository 'scripts\create-update-manifest.mjs') --version $Version --directory $output --architectures ($Architecture -join ',')
+  if ($LASTEXITCODE -ne 0) { throw 'Could not generate the COS update manifest.' }
   Write-Host "Release build completed: $output"
+  Write-Host 'Upload the versioned installers to COS first; publish latest.json as saplink/latest.json only after verifying their downloads.'
 } catch {
   # Keep the requested version on failure so the same command can resume a rebuild.
   Write-Warning 'Release did not complete. Version files may already be updated; fix the error and rerun the same command.'

@@ -27,7 +27,7 @@ node dist/cli.js update check --json
 
 ## 测试与接口维护
 
-版本检查模块为 `src/updates.ts`，当前版本取自 `package.json`，更新来源固定为 `OneOFF-ive/saplink` 的 GitHub `releases/latest` 接口。正式标签须为语义版本（可带 `v` 前缀）；仅提示版本更高的正式发布，同号正式版高于本地预发布版。不是按字符串或发布时间比较版本；GitHub latest 指定的版本也不一定是所有标签中的最大版本。
+版本检查模块为 `src/updates.ts`，当前版本取自 `package.json`，默认优先读取 COS 的 `saplink/latest.json`，不可用时回退 `OneOFF-ive/saplink` 的 GitHub `releases/latest` 接口。正式标签须为语义版本（可带 `v` 前缀）；仅提示版本更高的正式发布，同号正式版高于本地预发布版。不是按字符串或发布时间比较版本；GitHub latest 指定的版本也不一定是所有标签中的最大版本。
 
 检查使用独立的 `update-check.json` 缓存，不获取 runtime/config 锁。HTTP 请求不携带 SAP 或 MCP 凭据、不跟随重定向，设置 8 秒超时；不执行安装文件。模块允许注入 fetch 和时间供离线测试，覆盖比较、缓存与强制刷新、错误响应及 CLI 文本/JSON 输出。
 
@@ -95,3 +95,59 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packagin
 测试安装包单独输出到 `.saplink/installer-build/tests`，不进入发布目录。隔离安装测试使用专用临时目录和 `HKCU\Software\SapLinkInstallerTest`，不修改真实用户 PATH 或桌面；测试快捷方式放在测试安装目录内。测试会保留临时文件用于排错，不应将 `-test-setup.exe` 作为发行包分发。不同架构的测试依次执行，因为它们使用同一个测试注册表位置。
 
 构建包含目标 Node 与原生凭据模块的执行检查。x64 Windows 不能执行 ARM64 检查，因此在 x64 构建机选择 `-Architecture x64`，ARM64 产物在 ARM64 构建机生成。ARM64 Windows 11 可以在支持 x64 模拟的环境生成并检查两个版本。
+
+## COS 双更新源发布
+
+国内入口为 `https://saplink-1302377695.cos.ap-shanghai.myqcloud.com/saplink/latest.json`。正常情况下只访问 COS；COS 超时、HTTP 错误（包括 404）、无效元数据时才访问 GitHub。不是同时查询后选择最大版本，因此必须在发版时同步清单。两处均失败时报告无法检查；COS 不可用且 GitHub 返回 404 时为未知最新版，不认定已是最新。
+
+`SAPLINK_UPDATE_URL` 可设为自有 HTTPS 清单 URL（不含凭据、查询或片段），也可设为 `github` 仅使用 GitHub。自动检查进程需重启才读取新环境；切换源会使原缓存失效。每个源请求超时 8 秒，串行回退可能合计接近 16 秒；后台失败保持静默。
+
+`release:windows` 成功后生成 `outputs/installers/<version>/latest.json`，只包含本次构建的架构。也可以为已有安装包生成，不重打包或变更项目版本：
+
+```powershell
+node scripts/create-update-manifest.mjs --version 0.1.0 --architectures x64
+```
+
+脚本要求标准命名的真实安装包和对应 `.sha256`，重新计算 SHA-256 并核对后才原子写入清单；缺失或校验不符则失败。不用 ETag 当 SHA-256，不为未上传的架构猜下载链接。企业源可传 `--base-url https://updates.example.com/saplink/`；支持 `--directory` 指定本地安装包目录、`--out` 指定清单输出文件。
+
+发布顺序：
+
+1. 将该版本安装包与 `.sha256` 上传 COS 的 `saplink/v<version>/`，保留版本唯一文件名。
+2. 公开下载并验证 SHA-256，确认清单中列出的每种架构都可访问。
+3. 最后将本地 `latest.json` 上传覆盖 COS 的 `saplink/latest.json`，不要放在版本子目录。元数据建议设置 `Content-Type: application/json`、`Cache-Control: no-cache`；安装包使用长期缓存，发布后不覆盖同版本二进制。
+4. 用 `saplink update check --force --json` 确认 `source=cos`、版本、架构 URL 与 SHA-256。管理页面会按架构展示国内直达下载链接，CLI 在文本/JSON 中也提供。
+
+清单结构如下（示例哈希需由脚本替换，不能直接发布）：
+
+```json
+{
+  "schema_version": 1,
+  "version": "0.1.0",
+  "published_at": "2026-10-17T00:00:00Z",
+  "downloads": [{
+    "architecture": "x64",
+    "url": "https://saplink-1302377695.cos.ap-shanghai.myqcloud.com/saplink/v0.1.0/SapLink-0.1.0-win-x64-setup.exe",
+    "sha256": "<64位小写SHA-256，由脚本计算>"
+  }]
+}
+```
+
+清单仅支持正式三段版本，架构 x64/arm64，每种最多一次。下载 URL 必须与清单同源，路径与版本及标准文件名一致，不允许秘密、重定向 URL 或任意第三方下载地址。更新检查只返回校验值，不自动下载、校验或执行安装包。同一存储源提供的哈希不能独立证明发布者身份。
+
+旧安装包不包含新增双源逻辑，上传清单不会为旧进程增加功能；需要重新构建并由用户手动安装包含该功能的版本。当前源代码版本若高于清单版本，会正确显示没有更高版本，不提示降级。
+
+### GitHub Release 自动同步到 COS
+
+工作流为 `.github/workflows/sync-cos-downloads.yml`，与官网同步独立运行。将工作流及脚本推送到 `main` 后生效；GitHub 发布正式 Release 自动触发，跳过预发布。先将两个架构安装包作为附件上传到 Release 草稿，再发布。脚本允许等待附件和 GitHub SHA-256 元数据就绪，超时失败，不发布半套更新。
+
+仓库 Actions secrets 使用 `COS_SECRET_ID`、`COS_SECRET_KEY`。固定目标为桶 `saplink-1302377695`、地域 `ap-shanghai`，对象前缀 `saplink/`。使用专用子账号，在该前缀限制 `cos:GetObject`、`cos:HeadObject`、`cos:PutObject` 权限，不需要桶 ACL 修改、删除对象或分块上传权限；此脚本对不超过 256 MiB 的安装包使用单次 PUT。密钥仅在 COS 上传步骤的环境中读取，不传命令参数，不展示 SDK 错误正文或请求上下文。桶的公开读权限需已配置，工作流不会改变它。
+
+脚本复用官网同步的官方 Release 下载与 GitHub digest 校验，上传前再次计算本地 SHA-256；先上传版本目录内的二进制和 `.sha256`，通过匿名 HTTPS 实际下载核验，然后才提交根目录 `saplink/latest.json`。清单使用 GitHub 的正式发布时间，设置 JSON Content-Type 和 `Cache-Control: no-cache`；版本文件使用不可变长期缓存。不重新构建 Release 附件，也不执行安装包。
+
+所有 COS 同步运行通过同一 concurrency group 串行化。同步前后检查 GitHub latest 身份以及 COS 当前版本，旧事件或补发旧版本不会覆盖较新指针；同版本不同内容、已有损坏二进制或异常清单会报错，不静默覆盖。失败可在 Actions 重跑，已上传文件会重新核验并复用，旧 latest.json 在发布新指针前保持不变。发布期间不要同时手工覆盖 COS 清单；该并发保护不包含平台外的人工写入。
+
+首次补同步现有正式版：GitHub → Actions → **Sync COS downloads** → **Run workflow**，`release_tag` 留空同步 GitHub 最新正式版。指定旧 tag 时，如果它已不是 GitHub latest，就会跳过。完成后访问 COS 的 `saplink/latest.json` 并检查 workflow 日志。不要为了同步已有安装包另发重复版本或覆盖原二进制。
+
+如果 Release 是由其他工作流用默认 `GITHUB_TOKEN` 创建，GitHub 通常不会再触发 release 工作流；发布流程应在附件上传完成后显式调用此 reusable workflow（`workflow_call` 并传递这两个 secrets），或手动 dispatch。主分支没有工作流/脚本时，仅配置 secrets 不会自动上传。
+
+本地隔离回归：`python .github/scripts/test-sync-cos-release.py -v`。只使用模拟安装包和内存 COS，不读取密钥或操作云端。

@@ -27,7 +27,7 @@ saplink update check --json
 saplink update check --force --json
 ```
 
-按用户的更新检查或升级请求执行。默认查询 GitHub 最新正式 Release，结果缓存 24 小时；`--force` 强制联网刷新。此命令不要求 SAP 登录、MCP 服务运行或令牌，不停止服务、不自动下载或安装。长期运行的 UI、前台或后台服务还会在启动后及每 24 小时自动检查，管理页面显示下载链接，前台以 stderr 提示，同时将最近新版本通知保存至配置目录的 `update-notice.json`。该文件为历史通知，不代表当前仍需升级。`SAPLINK_AUTO_UPDATE_CHECK=0` 并重启可关闭自动检查；不为检查版本启动或重启原本未运行的服务。
+按用户的更新检查或升级请求执行。默认优先查询 COS 版本清单，不可用时回退 GitHub 最新正式 Release，结果缓存 24 小时；`--force` 强制联网刷新。此命令不要求 SAP 登录、MCP 服务运行或令牌，不停止服务、不自动下载或安装。长期运行的 UI、前台或后台服务还会在启动后及每 24 小时自动检查，管理页面显示下载链接，前台以 stderr 提示，同时将最近新版本通知保存至配置目录的 `update-notice.json`。该文件为历史通知，不代表当前仍需升级。`SAPLINK_AUTO_UPDATE_CHECK=0` 并重启可关闭自动检查；不为检查版本启动或重启原本未运行的服务。
 
 成功结果的 `data` 包含 `current_version`、`latest_version`、`update_available`、`release_url`、`published_at`、`checked_at`、`cached`、`message`。`checked_at` 是 UTC 时间；`cached=true` 时不是本次联网时间。发现更新时向用户提供返回的发布页面，由用户选择 x64 或 ARM64 安装包，不猜附件 URL。
 

@@ -3,6 +3,8 @@ $testRoot = Join-Path $env:TEMP ('SapLink-release-test-' + [Guid]::NewGuid().ToS
 $scripts = Join-Path $testRoot 'packaging\windows'
 New-Item -ItemType Directory -Path $scripts -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'release.ps1') -Destination $scripts
+New-Item -ItemType Directory -Path (Join-Path $testRoot 'scripts') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\create-update-manifest.mjs') -Destination (Join-Path $testRoot 'scripts')
 $utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $testRoot 'package.json'), @'
 {"name":"saplink-release-test","version":"1.0.0","private":true,"scripts":{"version":"node -e \"require('fs').writeFileSync('hook-ran', 'unexpected')\""}}
@@ -53,9 +55,14 @@ Run-Release @('-Version','1.2.3') $true
 Assert-Version '1.2.3'
 $call = Get-Content (Join-Path $testRoot 'build-call.json') -Raw | ConvertFrom-Json
 if (($call.architecture -join ',') -ne 'x64,arm64' -or $call.skip_tests) { throw 'Default build options incorrect.' }
+$manifest = Get-Content (Join-Path $testRoot 'outputs\installers\1.2.3\latest.json') -Raw | ConvertFrom-Json
+if ($manifest.version -ne '1.2.3' -or $manifest.downloads.Count -ne 2) { throw 'Default manifest does not match the release.' }
 Run-Release @('-Version','1.2.3','-Architecture','x64','-SkipTests') $true
 $call = Get-Content (Join-Path $testRoot 'build-call.json') -Raw | ConvertFrom-Json
 if (($call.architecture -join ',') -ne 'x64' -or !$call.skip_tests) { throw 'Explicit build options incorrect.' }
+$manifest = Get-Content (Join-Path $testRoot 'outputs\installers\1.2.3\latest.json') -Raw | ConvertFrom-Json
+if ($manifest.downloads.Count -ne 1 -or $manifest.downloads[0].architecture -ne 'x64') { throw 'Manifest advertised an unbuilt architecture.' }
+if ($manifest.downloads[0].url -notlike '*/v1.2.3/SapLink-1.2.3-win-x64-setup.exe') { throw 'Manifest download path does not match the release.' }
 if (Test-Path (Join-Path $testRoot 'hook-ran')) { throw 'npm version hook was executed.' }
 Set-Content (Join-Path $testRoot 'fail-build') 'fail'
 Run-Release @('-Version','1.2.4') $false

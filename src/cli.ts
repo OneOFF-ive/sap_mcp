@@ -110,7 +110,9 @@ cli.command('update').description('Check releases without downloading or install
       console.log(`SapLink ${result.current_version}; latest stable: ${result.latest_version ?? 'unknown'}`);
       console.log(result.message);
       console.log(`Release / download page: ${result.release_url}`);
-      if (result.cached) console.log('Using cached metadata; use --force to check GitHub again.');
+      console.log(`Update source: ${result.source}`);
+      for (const item of result.downloads) console.log(`Windows ${item.architecture}: ${item.url}\nSHA-256: ${item.sha256}`);
+      if (result.cached) console.log('Using cached metadata; use --force to refresh update sources.');
     }
   });
 

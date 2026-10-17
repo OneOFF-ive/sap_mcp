@@ -2,10 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { checkForUpdate, isNewerVersion, startAutomaticUpdates } from '../src/updates.js';
+import { checkForUpdate as checkDualSource, defaultManifestUrl, isNewerVersion, startAutomaticUpdates as startDualAutomatic } from '../src/updates.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
+
+// Keep the original GitHub contract checks explicit; dual-source behavior is tested below.
+const checkForUpdate = (...args: Parameters<typeof checkDualSource>) => checkDualSource(args[0], args[1], { ...args[2], manifestUrl: null });
+const startAutomaticUpdates = (...args: Parameters<typeof startDualAutomatic>) => startDualAutomatic(args[0], args[1], { ...args[2], manifestUrl: null });
 
 const release = { tag_name: 'v0.2.0', draft: false, prerelease: false, published_at: '2026-10-17T00:00:00Z',
   html_url: 'https://github.com/OneOFF-ive/saplink/releases/tag/v0.2.0' };
@@ -81,7 +85,7 @@ test('CLI exposes cached update and download information in text and JSON modes'
   try {
     await checkForUpdate('0.1.0', directory, { fetcher: fetcher(release) });
     const execute = promisify(execFile);
-    const env = { ...process.env, SAPLINK_CONFIG_DIR: directory };
+    const env = { ...process.env, SAPLINK_CONFIG_DIR: directory, SAPLINK_UPDATE_URL: 'github' };
     const json = await execute(process.execPath, [resolve('dist/cli.js'), 'update', 'check', '--json'], { env, timeout: 20000 });
     const result = JSON.parse(json.stdout);
     assert.equal(json.stderr, '');
@@ -152,4 +156,79 @@ test('automatic timer schedules later checks without blocking the caller', async
     await new Promise(resolve => setTimeout(resolve, 40));
     assert.equal(calls, stopped);
   } finally { automatic.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+const manifest = { schema_version: 1, version: '0.2.0', published_at: '2026-10-17T00:00:00Z', downloads: [{
+  architecture: 'x64', sha256: 'a'.repeat(64),
+  url: new URL('v0.2.0/SapLink-0.2.0-win-x64-setup.exe', defaultManifestUrl).href
+}] };
+
+test('COS is preferred, exposes verified download metadata and caches it', async () => {
+  const directory = await temporaryDirectory();
+  let calls = 0;
+  try {
+    const mock = (async (url, init) => {
+      calls++; assert.equal(url, defaultManifestUrl); assert.equal(init?.redirect, 'error');
+      assert.equal(new Headers(init?.headers).has('Authorization'), false);
+      return new Response(JSON.stringify(manifest));
+    }) as typeof fetch;
+    const first = await checkDualSource('0.1.0', directory, { fetcher: mock, now: 1000 });
+    assert.equal(first.source, 'cos'); assert.equal(first.update_available, true);
+    assert.deepEqual(first.downloads, manifest.downloads);
+    const cached = await checkDualSource('1.0.1', directory, { fetcher: mock, now: 2000 });
+    assert.equal(cached.cached, true); assert.equal(cached.update_available, false); assert.equal(calls, 1);
+    await checkDualSource('0.1.0', directory, { fetcher: mock, now: 3000, force: true });
+    assert.equal(calls, 2);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('missing, offline, oversized or unsafe COS metadata falls back to GitHub', async () => {
+  const directory = await temporaryDirectory();
+  const invalid = [
+    () => new Response('{}', { status: 404 }),
+    () => { throw new Error('offline'); },
+    () => new Response('x'.repeat(300 * 1024)),
+    () => new Response(JSON.stringify({ ...manifest, version: '0.3.0-beta' })),
+    () => new Response(JSON.stringify({ ...manifest, downloads: [{ ...manifest.downloads[0], url: 'https://evil.test/setup.exe' }] })),
+    () => new Response(JSON.stringify({ ...manifest, downloads: [{ ...manifest.downloads[0], url: manifest.downloads[0].url.replace('win-x64', 'win-arm64') }] })),
+    () => new Response(JSON.stringify({ ...manifest, downloads: [manifest.downloads[0], manifest.downloads[0]] }))
+  ];
+  try {
+    for (const response of invalid) {
+      const urls: string[] = [];
+      const result = await checkDualSource('0.1.0', directory, { force: true, fetcher: (async url => {
+        urls.push(String(url));
+        return String(url) === defaultManifestUrl ? response() : new Response(JSON.stringify(release));
+      }) as typeof fetch });
+      assert.equal(result.source, 'github'); assert.deepEqual(result.downloads, []);
+      assert.equal(result.latest_version, '0.2.0'); assert.equal(urls.length, 2);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('changing configured manifest invalidates cache and download origin is scoped', async () => {
+  const directory = await temporaryDirectory();
+  const customUrl = 'https://updates.example.org/saplink/latest.json';
+  const customManifest = { ...manifest, downloads: [{ ...manifest.downloads[0], url: new URL('v0.2.0/SapLink-0.2.0-win-x64-setup.exe', customUrl).href }] };
+  try {
+    await checkDualSource('0.1.0', directory, { now: 1000, fetcher: fetcher(manifest) });
+    let calls = 0;
+    const changed = await checkDualSource('0.1.0', directory, { now: 2000, manifestUrl: customUrl, fetcher: (async url => {
+      calls++; assert.equal(url, customUrl); return new Response(JSON.stringify(customManifest));
+    }) as typeof fetch });
+    assert.equal(calls, 1); assert.equal(changed.cached, false); assert.equal(changed.source, 'cos');
+    await assert.rejects(checkDualSource('0.1.0', directory, { manifestUrl: 'https://user:secret@example.org/latest.json' }), /UPDATE_SOURCE_INVALID|must be an HTTPS/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('cancellation during COS failure prevents a fallback request', async () => {
+  const directory = await temporaryDirectory();
+  const controller = new AbortController();
+  let calls = 0;
+  try {
+    await assert.rejects(checkDualSource('0.1.0', directory, { signal: controller.signal, fetcher: (async () => {
+      calls++; controller.abort(); throw new Error('cancelled');
+    }) as typeof fetch }));
+    assert.equal(calls, 1);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
