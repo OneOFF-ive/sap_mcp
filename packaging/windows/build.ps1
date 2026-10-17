@@ -7,13 +7,13 @@ $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $buildRoot = Join-Path $repository '.saplink\installer-build'
 $cache = Join-Path $repository '.saplink\installer-cache'
-$output = Join-Path $repository 'outputs\installers'
-if ($TestMode) { $output = Join-Path $buildRoot 'tests' }
-New-Item -ItemType Directory -Force -Path $buildRoot,$cache,$output | Out-Null
 $lock = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'download-lock.json') -Raw | ConvertFrom-Json
 $package = Get-Content -LiteralPath (Join-Path $repository 'package.json') -Raw | ConvertFrom-Json
-$npmCli = Join-Path (Split-Path -Parent (Get-Command npm.cmd).Source) 'node_modules\npm\bin\npm-cli.js'
 if ($package.version -notmatch '^\d+\.\d+\.\d+$') { throw 'Installer requires a three-part numeric application version.' }
+$output = Join-Path $repository ("outputs\installers\" + $package.version)
+if ($TestMode) { $output = Join-Path $buildRoot 'tests' }
+New-Item -ItemType Directory -Force -Path $buildRoot,$cache,$output | Out-Null
+$npmCli = Join-Path (Split-Path -Parent (Get-Command npm.cmd).Source) 'node_modules\npm\bin\npm-cli.js'
 
 function Assert-Exit([string]$Step) { if ($LASTEXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" } }
 function Download-Verified([string[]]$Urls, [string]$Path, [string]$Sha256) {
