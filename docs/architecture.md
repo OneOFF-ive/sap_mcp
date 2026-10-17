@@ -12,6 +12,7 @@
 
 当前功能包括：
 
+- Windows x64 / ARM64 安装包，内置运行环境，无需另装 Node.js 或 npm；安装步骤见 [Windows 安装指南](windows-installer.md)。
 - 手动配置多个 SAP 连接，测试登录并探测 ADT 能力。
 - 本地 Web 管理界面、双击启动脚本、连接与令牌管理、MCP 服务启停。
 - HTTP MCP 服务及本地访问令牌认证。
@@ -21,7 +22,7 @@
 - 创建函数组与空函数模块，浏览成员，修改及检查函数模块和组内 Include；通过组快照校验整体激活。
 - 对象锁、版本冲突、传输请求和部分失败处理。
 
-当前不提供桌面安装包、stdio MCP、SAP GUI 配置解析、RFC、SAProuter、SNC/SSO、调试、任意 ABAP 执行、删除对象或释放传输请求。
+当前不提供 stdio MCP、SAP GUI 配置解析、RFC、SAProuter、SNC/SSO、调试、任意 ABAP 执行、删除对象或释放传输请求。
 
 ## 2. 总体架构
 
