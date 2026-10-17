@@ -144,9 +144,11 @@ node scripts/create-update-manifest.mjs --version 0.1.0 --architectures x64
 
 工作流为 `.github/workflows/sync-cos-downloads.yml`，与官网同步独立运行。将工作流及脚本推送到 `main` 后生效；GitHub 发布正式 Release 自动触发，跳过预发布。先将两个架构安装包作为附件上传到 Release 草稿，再发布。脚本允许等待附件和 GitHub SHA-256 元数据就绪，超时失败，不发布半套更新。
 
-仓库 Actions secrets 使用 `COS_SECRET_ID`、`COS_SECRET_KEY`。固定目标为桶 `saplink-1302377695`、地域 `ap-shanghai`，对象前缀 `saplink/`。使用专用子账号，在该前缀限制 `cos:GetObject`、`cos:HeadObject`、`cos:PutObject` 权限，不需要桶 ACL 修改、删除对象或分块上传权限；此脚本对不超过 256 MiB 的安装包使用单次 PUT。密钥仅在 COS 上传步骤的环境中读取，不传命令参数，不展示 SDK 错误正文或请求上下文。桶的公开读权限需已配置，工作流不会改变它。
+仓库 Actions secrets 使用 `COS_SECRET_ID`、`COS_SECRET_KEY`。固定目标为桶 `saplink-1302377695`、地域 `ap-shanghai`，对象前缀 `saplink/`。使用专用子账号，保留 `cos:GetObject`、`cos:HeadObject`、`cos:PutObject`，并为断点续传增加 `cos:InitiateMultipartUpload`、`cos:UploadPart`、`cos:CompleteMultipartUpload`、`cos:ListMultipartUploads`、`cos:ListParts`。对象操作限制为该前缀；列举上传任务按腾讯云对应桶资源授权。若之前按单次 PUT 的最小策略授权，需要先补齐这些权限，无需重新生成密钥，也不需要授予整个账号的管理权限、修改桶 ACL 或删除已发布对象的权限。[腾讯云分块上传权限说明](https://cloud.tencent.com/document/product/436/65820)。密钥仅在 COS 上传步骤的环境中读取，不传命令参数，不展示 SDK 错误正文或请求上下文。桶的公开读权限需已配置，工作流不会改变它。
 
-脚本复用官网同步的官方 Release 下载与 GitHub digest 校验，上传前再次计算本地 SHA-256；先上传版本目录内的二进制和 `.sha256`，通过匿名 HTTPS 实际下载核验，然后才提交根目录 `saplink/latest.json`。清单使用 GitHub 的正式发布时间，设置 JSON Content-Type 和 `Cache-Control: no-cache`；版本文件使用不可变长期缓存。不重新构建 Release 附件，也不执行安装包。
+脚本复用官网同步的官方 Release 下载与 GitHub digest 校验，上传前再次计算本地 SHA-256。安装包使用固定版本 SDK 的 1 MiB 分块上传，最多三个并发线程，SDK 重试失败块；重跑时 SDK 校验已有块后续传，不重新上传整个文件。初始化和最终合并均设置禁止覆盖同名对象，合并时额外补齐 SDK 1.9.44 高级接口未透传的禁止覆盖头。未完成的分块任务保留以供重跑；不再使用的任务可由维护者在 COS 控制台核实后清理，脚本不删除已发布对象。
+
+先上传版本目录内的二进制和 `.sha256`，通过匿名 HTTPS 实际下载核验，然后才提交根目录 `saplink/latest.json`。公开安装包以 1 MiB Range 分段回读，每段最多尝试三次；核对 Content-Range、总长度和一致 ETag，全部字节按顺序计算完整 SHA-256，任何不一致都不发布清单。上传、回读和提交均显示阶段与字节进度，工作流总时限为 90 分钟。链路持续不可用时仍可能失败；不能把超时或仅上传成功视为发布完成。清单使用 GitHub 的正式发布时间，设置 JSON Content-Type 和 `Cache-Control: no-cache`；版本文件使用不可变长期缓存。不重新构建 Release 附件，也不执行安装包。
 
 所有 COS 同步运行通过同一 concurrency group 串行化。同步前后检查 GitHub latest 身份以及 COS 当前版本，旧事件或补发旧版本不会覆盖较新指针；同版本不同内容、已有损坏二进制或异常清单会报错，不静默覆盖。失败可在 Actions 重跑，已上传文件会重新核验并复用，旧 latest.json 在发布新指针前保持不变。发布期间不要同时手工覆盖 COS 清单；该并发保护不包含平台外的人工写入。
 

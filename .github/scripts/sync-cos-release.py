@@ -1,5 +1,6 @@
 """Publish verified official release assets; keep the COS pointer last and monotonic."""
 import hashlib
+import http.client
 import importlib.util
 import json
 import logging
@@ -7,6 +8,8 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 
 BUCKET = 'saplink-1302377695'
@@ -14,6 +17,7 @@ REGION = 'ap-shanghai'
 ORIGIN = f'https://{BUCKET}.cos.{REGION}.myqcloud.com'
 LATEST_KEY = 'saplink/latest.json'
 MAX_INSTALLER_SIZE = 256 * 1024 * 1024
+TRANSFER_CHUNK = 1024 * 1024
 
 
 class SyncError(ValueError):
@@ -81,9 +85,14 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise SyncError('Unexpected COS redirect')
 
 
-def open_public(key):
+def open_public(key, start=None, end=None, etag=None):
     opener = urllib.request.build_opener(NoRedirect())
-    request = urllib.request.Request(f'{ORIGIN}/{key}', headers={'Cache-Control': 'no-cache'})
+    headers = {'Cache-Control': 'no-cache'}
+    if start is not None:
+        headers['Range'] = f'bytes={start}-{end}'
+    if etag:
+        headers['If-Match'] = etag
+    request = urllib.request.Request(f'{ORIGIN}/{key}', headers=headers)
     return opener.open(request, timeout=60)
 
 
@@ -97,27 +106,50 @@ def public_bytes(key, limit):
 
 def verify_public(key, expected_size, expected_hash):
     digest = hashlib.sha256()
-    size = 0
-    with open_public(key) as response:
-        while chunk := response.read(1024 * 1024):
-            size += len(chunk)
-            if size > expected_size:
-                raise SyncError('Public object exceeds expected size')
-            digest.update(chunk)
-    if size != expected_size or digest.hexdigest() != expected_hash:
+    etag = None
+    for start in range(0, expected_size, TRANSFER_CHUNK):
+        end = min(start + TRANSFER_CHUNK, expected_size) - 1
+        for attempt in range(3):
+            try:
+                with open_public(key, start, end, etag) as response:
+                    if response.status != 206 or response.headers.get('Content-Range') != f'bytes {start}-{end}/{expected_size}':
+                        raise SyncError('Public COS range or object size is inconsistent')
+                    current_etag = response.headers.get('ETag')
+                    if not current_etag or (etag is not None and current_etag != etag):
+                        raise SyncError('Public COS object changed during verification')
+                    chunk = response.read(end - start + 2)
+                    if len(chunk) != end - start + 1:
+                        raise OSError('Incomplete public range')
+                    etag = current_etag
+                break
+            except (OSError, urllib.error.URLError, http.client.IncompleteRead) as error:
+                if isinstance(error, urllib.error.HTTPError) and error.code not in (408, 429, 500, 502, 503, 504):
+                    raise SyncError(f'Public COS verification returned HTTP {error.code}') from None
+                if attempt == 2:
+                    raise SyncError('Public COS range verification failed after three attempts') from None
+                print(f'Retrying public range {start}-{end}: {key}', flush=True)
+                time.sleep(2 ** attempt)
+        digest.update(chunk)
+        print(f'Public verification: {key} {end + 1}/{expected_size} bytes', flush=True)
+    if digest.hexdigest() != expected_hash:
         raise SyncError('Public COS download failed SHA-256 verification')
 
 
 def sync_release(path, store, latest_release, verify=verify_public, read_public=public_bytes):
+    print('Checking latest GitHub release and local installer checksums...', flush=True)
     release = latest_release()
     candidate, files = prepare_manifest(path, release)
+    print('Reading existing COS latest.json...', flush=True)
     if not may_publish(store.read_manifest(), candidate):
         print('Skipping: COS already advertises a newer version.')
         return False
     for key, local, size, sha256 in files:
+        print(f'Checking COS object: {key}', flush=True)
         if not store.exists(key):
+            print(f'Uploading {local.name}: {size} bytes', flush=True)
             store.put_file(key, local)
         # Existing binaries must also match; a failed upload retry never overwrites them.
+        print(f'Verifying anonymous HTTPS download: {key}', flush=True)
         verify(key, size, sha256)
         checksum = f'{sha256}  {local.name}\n'.encode()
         checksum_key = key + '.sha256'
@@ -136,6 +168,7 @@ def sync_release(path, store, latest_release, verify=verify_public, read_public=
         print('Skipping latest.json: COS already advertises a newer version.')
         return False
     if existing is None or existing['version'] != candidate['version']:
+        print('Both installers verified; publishing latest.json...', flush=True)
         encoded = (json.dumps(candidate, indent=2) + '\n').encode()
         store.put_bytes(LATEST_KEY, encoded, immutable=False)
     expected = candidate if existing is None or existing['version'] != candidate['version'] else existing
@@ -179,10 +212,18 @@ class CosStore:
         return json.loads(data)
 
     def put_file(self, key, path):
-        with path.open('rb') as body:
-            self.client.put_object(Bucket=BUCKET, Key=key, Body=body, EnableMD5=True,
-                                   Metadata={'x-cos-forbid-overwrite': 'true'}, ContentType='application/octet-stream',
-                                   CacheControl='public, max-age=31536000, immutable')
+        def progress(completed, total):
+            print(f'Upload: {path.name} {int(completed)}/{int(total)} bytes', flush=True)
+        try:
+            self.client.upload_file(Bucket=BUCKET, Key=key, LocalFilePath=str(path),
+                                    PartSize=1, MAXThread=3, EnableMD5=True, progress_callback=progress,
+                                    Metadata={'x-cos-forbid-overwrite': 'true'}, ContentType='application/octet-stream',
+                                    CacheControl='public, max-age=31536000, immutable')
+        except self.service_error as error:
+            if error.get_status_code() == 403:
+                raise SyncError('COS multipart access denied; check InitiateMultipartUpload, UploadPart, '
+                                'CompleteMultipartUpload, ListMultipartUploads and ListParts permissions') from None
+            raise
 
     def put_bytes(self, key, data, immutable):
         # SDK 1.9.44 passes custom HTTP headers through Metadata, without adding a prefix.
@@ -192,16 +233,29 @@ class CosStore:
                                CacheControl='public, max-age=31536000, immutable' if immutable else 'no-cache', **options)
 
 
+def create_cos_client(config):
+    from qcloud_cos import CosS3Client
+
+    class ImmutableMultipartClient(CosS3Client):
+        def complete_multipart_upload(self, *args, **kwargs):
+            # SDK 1.9.44 upload_file forwards Metadata to initiation only.
+            # The final commit must independently forbid overwriting a published object.
+            kwargs['Metadata'] = {**kwargs.get('Metadata', {}), 'x-cos-forbid-overwrite': 'true'}
+            return super().complete_multipart_upload(*args, **kwargs)
+
+    return ImmutableMultipartClient(config, retry=2)
+
+
 def main():
     # Import SDK only in the uploader step; tests use an isolated in-memory store.
-    from qcloud_cos import CosConfig, CosS3Client
+    from qcloud_cos import CosConfig
     from qcloud_cos.cos_exception import CosServiceError
     secret_id = os.environ.get('COS_SECRET_ID')
     secret_key = os.environ.get('COS_SECRET_KEY')
     if not secret_id or not secret_key:
         raise SyncError('Missing COS_SECRET_ID or COS_SECRET_KEY')
     config = CosConfig(Region=REGION, SecretId=secret_id, SecretKey=secret_key, Scheme='https', Timeout=60, AllowRedirects=False)
-    client = CosS3Client(config)
+    client = create_cos_client(config)
     spec = importlib.util.spec_from_file_location('prepare_release', Path(__file__).with_name('prepare-website-release.py'))
     github = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(github)

@@ -19,7 +19,7 @@ flowchart TD
 
 | 工作流 | 文件 | 目标 | Actions secret | 超时 |
 | --- | --- | --- | --- | --- |
-| Sync COS downloads | [sync-cos-downloads.yml](../.github/workflows/sync-cos-downloads.yml) | 国内更新源和下载文件 | COS_SECRET_ID、COS_SECRET_KEY | 25 分钟 |
+| Sync COS downloads | [sync-cos-downloads.yml](../.github/workflows/sync-cos-downloads.yml) | 国内更新源和下载文件 | COS_SECRET_ID、COS_SECRET_KEY | 90 分钟 |
 | Sync website downloads | [sync-website-downloads.yml](../.github/workflows/sync-website-downloads.yml) | 官网下载接收端 | SAPLINK_WEBSITE_SYNC_KEY | 90 分钟 |
 
 两条工作流均运行在 ubuntu-latest，仓库权限为 contents: read，只允许 `OneOFF-ive/saplink` 执行。各自使用独立 concurrency group 串行同步，cancel-in-progress=false，不互相等待；一条成功不代表另一条成功。
@@ -67,8 +67,10 @@ COS 工作流固定安装 cos-python-sdk-v5==1.9.44，并先运行离线同步�
 工作流复用 [prepare-website-release.py](../.github/scripts/prepare-website-release.py) 核验附件，再由 [sync-cos-release.py](../.github/scripts/sync-cos-release.py) 发布。
 
 - 版本文件位于 saplink/v<version>/，包括两个 exe 与各自 `.sha256`。
+- 安装包使用 1 MiB 分块、最多三线程上传，SDK 校验远端已完成块后续传；需补齐[分块上传权限](development.md#github-release-自动同步到-cos)。初始化及最终合并都禁止覆盖同名对象。
 - 客户端清单位于 saplink/latest.json，使用 schema_version、version、published_at、downloads。
 - 先上传并匿名 HTTPS 下载验证各安装包，最后更新 latest.json；同版本内容冲突或损坏文件报错，不静默覆盖。
+- 匿名校验按 1 MiB Range 顺序读取，失败段最多尝试三次，核对长度、ETag 及完整 SHA-256；日志显示上传、回读、清单提交阶段及字节进度。
 - 上传前后复核 GitHub latest 和 COS 版本，避免旧事件覆盖新指针；不保护工作流外的人工作业。
 - 同步失败时新版本文件可能已上传，不能当作发布事务已回滚；指针提交前保留旧清单。指针提交后的读回失败需要进一步核实公开状态。
 
@@ -100,7 +102,7 @@ sudo python3 /path/to/install-website-upload.py
 | fork 中 job 被跳过 | 固定仓库条件阻止运行；需要部署到其他仓库时应先调整并审查仓库身份及固定目标 |
 | 一直等待两个附件 | 核对标准文件名、双架构、uploaded 状态、大小和 GitHub digest；就绪后重跑 |
 | 任务成功但版本没变 | 核对 ready=false、latest 标签及 COS 已有更高版本，不把 skip 当作新版本上传成功 |
-| COS 失败 | 检查 secrets、指定前缀权限、公开读、网络和同版本内容冲突；不改哈希或覆盖二进制绕过 |
+| COS 失败 | 按阶段和字节日志检查 secrets、分块上传及列举权限、公开读、网络和同版本内容冲突；中断后新运行可复用已完成上传块，不改哈希或覆盖二进制绕过 |
 | 官网 SSH 失败 | 检查 secret、专用账号、受限接收器和固定主机公钥；不关闭 StrictHostKeyChecking |
 | 官网传输中断或超时 | 核对日志中的具体块，确认服务端已部署续传扩展；重跑会保留并复核已完成块，不必重新上传整包；链路持续不可用时仍会失败 |
 | 官网文件在但版本验证失败 | 检查公开 releases.json 和接收器的 latest 切换；仅文件存在不足以确认同步完成 |
