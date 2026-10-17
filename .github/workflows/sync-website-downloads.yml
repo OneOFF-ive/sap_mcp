@@ -50,6 +50,8 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SAPLINK_WEBSITE_SYNC_KEY }}
           PAYLOAD: ${{ steps.prepare.outputs.payload }}
+          METADATA: ${{ steps.prepare.outputs.metadata }}
+          MANIFEST: ${{ steps.prepare.outputs.manifest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -61,10 +63,16 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$key"
           unset SSH_PRIVATE_KEY
           printf '%s\n' '118.89.185.57 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINE72nJcd/l97GmHpxJ1UXLwLjR6J4ZMl/3+0IO/RiCl' > "$hosts"
-          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$hosts" \
-            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
-            saplinksync@118.89.185.57 sync < "$PAYLOAD"
+          options=(-T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$hosts"
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none)
+          probe=$(ssh "${options[@]}" saplinksync@118.89.185.57 check < "$MANIFEST")
+          need_upload=$(printf '%s' "$probe" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["need_upload"]).lower())')
+          if [ "$need_upload" = false ]; then
+            echo 'Official installers already verified on the server; using metadata-only synchronization.'
+            PAYLOAD="$METADATA"
+          fi
+          ssh "${options[@]}" saplinksync@118.89.185.57 sync < "$PAYLOAD"
 
       - name: Verify public download endpoints
         if: steps.prepare.outputs.ready == 'true'
