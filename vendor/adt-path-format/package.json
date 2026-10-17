@@ -1,0 +1,8 @@
+{
+  "name": "@saplink/adt-path-format",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Restricted string substitution for pinned abap-adt-api creation paths",
+  "main": "index.cjs",
+  "files": ["index.cjs", "README.md"]
+}

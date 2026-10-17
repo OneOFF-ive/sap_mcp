@@ -19,6 +19,7 @@ import { startService, stopService, restartService, serviceStatus, clearServiceC
 import { promptLocalPassword } from './password-prompt.js';
 import { cleanupLogs, retentionDays } from './log-cleanup.js';
 import { checkForUpdate, startRuntimeUpdateChecks } from './updates.js';
+import { SelfUpdater } from './self-update.js';
 
 const store = new ConfigStore();
 const credentials = new WindowsCredentials();
@@ -101,8 +102,8 @@ async function connectionInput(name: string, options: ConnectionOptions, old?: C
 cli.command('version').description('Show the current application version; supports --json')
   .action(() => jsonOutput ? printSuccess({ version: appVersion }, true) : console.log(appVersion));
 
-cli.command('update').description('Check releases without downloading or installing files')
-  .command('check').option('--force', 'Bypass the 24-hour release metadata cache')
+const updates = cli.command('update').description('Check releases or install a confirmed COS update');
+updates.command('check').option('--force', 'Bypass the 24-hour release metadata cache')
   .action(async options => {
     const result = await checkForUpdate(appVersion, store.directory, { force: Boolean(options.force) });
     if (jsonOutput) printSuccess(result, true);
@@ -114,6 +115,24 @@ cli.command('update').description('Check releases without downloading or install
       for (const item of result.downloads) console.log(`Windows ${item.architecture}: ${item.url}\nSHA-256: ${item.sha256}`);
       if (result.cached) console.log('Using cached metadata; use --force to refresh update sources.');
     }
+  });
+
+updates.command('install').option('--yes', 'Confirm download, graceful stop and installation of the latest COS version')
+  .action(async options => {
+    if (!options.yes) throw new AppError('CONFIRMATION_REQUIRED', '自动更新会下载安装包并正常停止应用，请确认后使用 update install --yes --json。');
+    const updater = new SelfUpdater(store.directory);
+    if (!(await updater.status()).supported) throw new AppError('UPDATE_NOT_INSTALLED', '自动安装仅支持 Windows 安装版；源码运行请手动安装。');
+    const before = await serviceStatus(store.directory);
+    if (!['stopped', 'running'].includes(before.state) || before.lease.guard_present) {
+      throw new AppError('SERVICE_NOT_MANAGED', '请在已打开的管理页面更新，或先正常退出前台应用；无法确认的进程不会被关闭。');
+    }
+    const release = await updater.check();
+    if (!release.update_available || !release.latest_version) { printSuccess(release, jsonOutput); return; }
+    await updater.install(release.latest_version, before.managed ? { mode: 'service', mcp_port: before.port } : { mode: 'stopped' },
+      async () => { if (before.managed) await stopService(store.directory); });
+    const result = await updater.wait();
+    if (result.phase === 'failed') throw new AppError(result.error_code ?? 'UPDATE_FAILED', result.message);
+    printSuccess({ ...result, message: '安装包已验证并移交独立更新程序；请查看 update-install-result.json 确认最终结果。' }, jsonOutput);
   });
 
 cli.command('status').description('Inspect configuration and process state without returning credentials')
@@ -286,7 +305,7 @@ cli.command('client-config').description('Export portable connection parameters,
   });
 
 cli.command('ui').description('Open the interactive local management interface')
-  .option('--port <port>', 'Management port', '8766').option('--no-open', 'Do not launch a browser')
+  .option('--port <port>', 'Management port', process.env.SAPLINK_UI_PORT ?? '8766').option('--no-open', 'Do not launch a browser')
   .action(async options => {
     if (jsonOutput) throw new AppError('INTERACTION_REQUIRED', 'ui is an interactive foreground command. Use status/doctor/service commands with --json for automation.');
     const port = parsePort(options.port);
@@ -295,7 +314,10 @@ cli.command('ui').description('Open the interactive local management interface')
     let closing = false;
     const stop = async () => { if (closing) return; closing = true; try { await runtime?.close(); } finally { await release(); } };
     try {
-      runtime = await startAdmin(store, credentials, port, undefined, stop);
+      const restartMcpPort = process.env.SAPLINK_RESTART_MCP_PORT;
+      delete process.env.SAPLINK_RESTART_MCP_PORT;
+      delete process.env.SAPLINK_UI_PORT;
+      runtime = await startAdmin(store, credentials, port, undefined, stop, { initialMcpPort: restartMcpPort ? parsePort(restartMcpPort) : undefined });
       console.log(`SapLink management: http://127.0.0.1:${port}/`);
       if (options.open && process.platform === 'win32') {
         const browser = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',

@@ -1,12 +1,14 @@
 # SapLink 架构
 
-本文说明 SapLink 1.0.0 的模块、接口和操作流程。产品介绍见 [README](../README.md)，安装与使用步骤见 [部署与运维手册](operations.md)。CLI 入口和包名为 saplink；配置目录、凭据服务名、环境变量和安装登记标识见[命名与本地数据](local-data.md)。
+本文说明 SapLink 当前源码的模块、接口和操作流程，核对时 package.json 版本为 1.0.1，不表示该版本已公开发布。产品介绍见 [README](../README.md)，安装与使用步骤见 [部署与运维手册](operations.md)。CLI 入口和包名为 saplink；配置目录、凭据服务名、环境变量和安装登记标识见[命名与本地数据](local-data.md)。
 
-文档核对日期：2026-10-15。客户端操作见 [MCP 客户端手册](mcp-client-guide.md)，部署与排障见 [运维手册](operations.md)。本文描述实现，不表示所有功能已在每个 SAP 版本验证。
+文档核对日期：2026-10-18。客户端操作见 [MCP 客户端手册](mcp-client-guide.md)，部署与排障见 [运维手册](operations.md)，外部分发链路见 [发布与 Actions](releases-and-actions.md)。本文描述实现，不表示所有功能已在每个 SAP 版本验证。
 
 ## 1. 目标与范围
 
-版本检查由 `src/updates.ts` 提供：手动命令及长期运行的 CLI/UI 共用 GitHub 正式 Release 检查与 24 小时缓存。启动后异步检查，进程内每 24 小时调度；不创建系统任务。新版本通过 stderr 和配置目录的 `update-notice.json` 提示，并经受保护的管理状态接口提供给 Web。该流程不经过 MCP 或 SAP ADT，不持有配置锁，不自动下载安装。`SAPLINK_AUTO_UPDATE_CHECK=0` 可关闭自动检查。命令与缓存规则见 [版本检查](operations.md#检查新版本)。
+版本检查由 `src/updates.ts` 提供：优先 COS 清单，不可用时回退 GitHub 最新正式 Release，共用 24 小时缓存。长期运行的 CLI/UI 启动后异步检查，进程内每 24 小时调度；不创建系统任务。新版本通过 stderr 和配置目录的 `update-notice.json` 提示，并经受保护的管理状态接口提供给 Web。检查不经过 MCP 或 SAP ADT，不持有配置锁，也不会自行下载安装。`SAPLINK_AUTO_UPDATE_CHECK=0` 可关闭自动检查。命令与缓存规则见 [版本检查](operations.md#检查新版本)。
+
+用户确认后的更新安装由 `src/self-update.ts` 与独立原生助手 `packaging/windows/update-runner.ps1` 完成：重新核对版本和架构、下载并校验安装包，再正常关闭当前应用、等待在途操作收尾，在原目录安装并尝试恢复原运行方式。仅支持包含助手的 Windows 安装版，不提供强杀、自动回滚或未经确认的静默升级。详见 [开发验证](development.md#自动更新实现与验证) 和 [运维流程](operations.md#用户确认的自动安装)。
 
 提供不依赖 VS Code 的本地 Web 管理界面与 CLI，通过 HTTP/HTTPS ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。后端 HTTPS 沿用默认 TLS 校验，不自动降级；本机管理与 MCP 监听仍使用 loopback HTTP。
 

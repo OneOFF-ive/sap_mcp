@@ -33,29 +33,80 @@ function buttonIcon(name, title, action, disabled = false, danger = false) {
   button.onclick = action; return button;
 }
 function badge(text, kind) { return element('span', text, `badge ${kind}`); }
+let updateChecking = false;
+let updateCheckError = '';
+let updateRequested = false;
+let updatePoll;
 function renderUpdate() {
-  let updateNotice = $('#update-notice');
-  if (!updateNotice) {
-    updateNotice = element('p', undefined, 'muted');
-    updateNotice.id = 'update-notice';
-    updateNotice.setAttribute('role', 'status');
-    document.querySelector('footer').before(updateNotice);
-  }
-  updateNotice.hidden = !state.update?.update_available;
-  updateNotice.replaceChildren();
-  if (state.update?.update_available) {
-    const link = element('a', `SapLink ${state.update.latest_version} 可用，查看发布与下载`);
-    link.href = state.update.release_url;
-    link.target = '_blank'; link.rel = 'noopener noreferrer';
-    updateNotice.append(link);
-    for (const download of state.update.downloads ?? []) {
-      const downloadLink = element('a', `Windows ${download.architecture} 国内下载`);
-      downloadLink.href = download.url;
-      downloadLink.target = '_blank'; downloadLink.rel = 'noopener noreferrer';
-      updateNotice.append(document.createTextNode(' · '), downloadLink);
+  const update = state.update;
+  const install = state.update_install;
+  const running = ['downloading', 'verifying', 'preparing', 'installing'].includes(install?.phase);
+  const check = $('#check-updates');
+  check.disabled = updateChecking || running;
+  check.textContent = updateChecking ? '正在检查…' : '检查版本更新';
+  const installButton = $('#install-update');
+  const hasPackage = update?.source === 'cos' && update.downloads?.some(item => item.architecture === install?.architecture);
+  installButton.hidden = !update?.update_available;
+  installButton.disabled = updateChecking || running || !install?.supported || !hasPackage || Boolean(updateCheckError);
+  $('#update-summary').textContent = updateCheckError || (updateChecking ? '正在检查最新正式版本…' : running || install?.phase === 'failed' ? install.message :
+    update?.update_available ? '发现新版本 ' + update.latest_version + '，当前版本 ' + state.version :
+    update?.latest_version ? '当前版本 ' + state.version + '，更新源暂未提供更高的正式版本。' :
+    update ? '暂未获取到可用的正式版本信息，请稍后重试。' : '可手动检查新版本。');
+  const progress = $('#update-progress');
+  progress.hidden = !running;
+  if (install?.total_bytes) progress.value = Math.min(100, install.downloaded_bytes / install.total_bytes * 100);
+  else progress.removeAttribute('value');
+  if (running && install?.downloaded_bytes) $('#update-summary').textContent += '（已下载 ' + (install.downloaded_bytes / 1048576).toFixed(1) + ' MiB）';
+  const notice = $('#update-notice');
+  notice.hidden = !update?.update_available;
+  notice.replaceChildren();
+  if (update?.update_available) {
+    const link = element('a', '查看发布说明与手动下载');
+    link.href = update.release_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; notice.append(link);
+    for (const download of update.downloads ?? []) {
+      const link = element('a', 'Windows ' + download.architecture + ' 国内下载');
+      link.href = download.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      notice.append(document.createTextNode(' · '), link);
     }
   }
+  const help = $('#update-help');
+  const last = install?.last_result;
+  help.textContent = update?.update_available && !install?.supported ? install?.unavailable_reason ?? '当前环境不支持自动安装。' :
+    update?.update_available && !hasPackage ? '国内源尚无当前安装架构的安装包，请稍后重试或手动下载。' :
+    last?.status === 'installed' ? '上次自动更新已安装版本 ' + last.version + '。' :
+    last?.status === 'failed' || last?.status === 'unknown' ? '上次更新未确认完成，请检查配置目录中的 update-install-result.json。' : '';
+  help.hidden = !help.textContent;
 }
+async function pollUpdate() {
+  if (!updateRequested) return;
+  try {
+    const result = await api('updates/status');
+    state.update = result.update; state.update_install = result.update_install; renderUpdate();
+    if (state.update_install.phase === 'failed') { updateRequested = false; clearInterval(updatePoll); }
+  } catch {
+    clearInterval(updatePoll);
+    $('#update-summary').textContent = '连接已断开，应用可能正在退出并安装更新。完成后将重新打开管理界面；请勿重复安装。';
+  }
+}
+$('#check-updates').onclick = async () => {
+  updateChecking = true; updateCheckError = ''; renderUpdate();
+  try {
+    const result = await api('updates/check', 'POST', {});
+    state.update = result.update; state.update_install = result.update_install;
+  } catch (error) { updateCheckError = error.message; toast(error.message, true); }
+  finally { updateChecking = false; renderUpdate(); }
+};
+$('#install-update').onclick = () => {
+  const version = state.update?.latest_version;
+  if (!version) return;
+  confirmAction('立即自动更新', '将下载并校验版本 ' + version + '，正常关闭当前应用后自动安装。MCP 连接将暂时中断，完成后尝试恢复原端口和运行状态。是否立即更新？', async () => {
+    try {
+      const result = await api('updates/install', 'POST', { version });
+      state.update_install = result.update_install; updateRequested = true; renderUpdate();
+      clearInterval(updatePoll); updatePoll = setInterval(pollUpdate, 1000); void pollUpdate();
+    } catch (error) { toast(error.message, true); }
+  });
+};
 function render() {
   $('#app-version').textContent = state.version ? `SapLink ${state.version}` : 'SapLink';
   renderUpdate();
@@ -223,6 +274,6 @@ else refresh().catch(error => toast(error.message, true));
 
 setInterval(async () => {
   if (!adminKey || document.hidden) return;
-  try { const latest = await api('state'); state.update = latest.update; renderUpdate(); }
+  try { const latest = await api('state'); state.update = latest.update; state.update_install = latest.update_install; renderUpdate(); }
   catch { /* Existing page actions report session and connection failures. */ }
 }, 60000);

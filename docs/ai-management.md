@@ -33,7 +33,7 @@ saplink update check --force --json
 
 `latest_version=null` 表示没有可公开访问的正式 Release（也可能是私有仓库），不能将 `update_available=false` 解读为已是最新版。有有效最新版本但没有更新时，也可能是本地开发版本高于发布版。预发布和草稿不会作为更新推荐。
 
-网络、超时、限流及其他 GitHub HTTP 错误返回 `UPDATE_CHECK_FAILED`；无效元数据返回 `UPDATE_RESPONSE_INVALID`，均为 `status=error`、退出 1。失败不使用旧缓存冒充联网结果，不影响现有服务；不反复重试。旧版 CLI 不认识命令时，引导查看[发布页面](https://github.com/OneOFF-ive/saplink/releases)。实际安装仍由用户手动完成。
+网络、超时、限流及其他 GitHub HTTP 错误返回 `UPDATE_CHECK_FAILED`；无效元数据返回 `UPDATE_RESPONSE_INVALID`，均为 `status=error`、退出 1。失败不使用旧缓存冒充联网结果，不影响现有服务；不反复重试。旧版 CLI 不认识命令时，引导查看[发布页面](https://github.com/OneOFF-ive/saplink/releases)。用户可在受支持的 Windows 安装版中明确选择自动安装。
 
 ## 缓存与日志清理
 
@@ -103,4 +103,4 @@ client-config 验证令牌属于当前配置且尚未撤销，再导出 `transpo
 
 分别验证配置写入、MCP 初始化、当前会话工具可见及目标 SAP 操作成功。客户端不支持热加载时可能仍需用户重载或开启新会话；密码仍由用户在本机窗口录入。远程或容器中的 Agent 不能直接通过自身 loopback 连接用户 Windows 服务，不能把这些前提隐瞒为“已全部接入”。
 
-技能不负责安装、升级安装包或卸载程序；Agent 可诊断、准备所需备份及正常停服，用户手动操作后再检查并恢复原端口及客户端接入。连接写开关与 SAP 具体变更遵循用户意图和 SAP 权限。后台托管不等于 Windows Service 或开机自启。
+技能不负责首次安装或卸载程序；已安装版本可在用户明确选择后使用 update install --yes --json 自动升级，诊断、备份和正常退出仍按升级意图执行，完成后检查版本并恢复客户端接入。连接写开关与 SAP 具体变更遵循用户意图和 SAP 权限。后台托管不等于 Windows Service 或开机自启。

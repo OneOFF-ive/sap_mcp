@@ -66,7 +66,7 @@ AI 客户端 → SapLink 本地 MCP 服务 → SAP ADT → SAP ABAP 系统
 
 完整步骤见 [Windows 安装指南](docs/windows-installer.md) 与 [部署与运维手册](docs/operations.md)。从源码运行与制作安装包见 [开发与构建指南](docs/development.md)。
 
-应用会自动检查新版本并提示下载，也可运行 `saplink update check` 手动检查；不会自动下载或安装。详细设置见 [版本检查](docs/operations.md#检查新版本)。各版本的变更记录见 [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases)。
+应用会自动检查新版本，也可运行 `saplink update check` 手动检查。支持的 Windows 安装版可在用户确认后下载、校验并安装更新，不会未经确认自行升级。详细步骤见 [版本检查](docs/operations.md#检查新版本) 与 [用户确认的自动安装](docs/operations.md#用户确认的自动安装)。各版本变更见 [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases)。
 
 ## 🛡️ 变更有明确的步骤
 
@@ -83,6 +83,7 @@ SapLink 是开发与查询工具，不是完整 IDE。目前不提供调试、�
 | 让 agent 快速学习 SAP 操作 | [MCP 客户端 SAP 操作手册](docs/mcp-client-guide.md) |
 | 让终端型 AI 客户端管理本地服务 | [AI 终端管理](docs/ai-management.md) |
 | 运行源码、测试与制作安装包 | [开发与构建指南](docs/development.md) |
+| 发布版本、配置 GitHub Actions 与下载同步 | [发布与 Actions 手册](docs/releases-and-actions.md) |
 | 理解架构与模块职责 | [架构文档](docs/architecture.md) |
 | 了解认证、数据和安全边界 | [安全说明](docs/security.md) |
 | 下载安装包与查看版本变更 | [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases) |

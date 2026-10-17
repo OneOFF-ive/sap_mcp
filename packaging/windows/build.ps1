@@ -35,6 +35,21 @@ function Reset-Stage([string]$Path) {
   New-Item -ItemType Directory -Path $absolute | Out-Null
 }
 
+function Install-ProductionDependencies([string]$App, [string]$Arch) {
+  # npm misresolves file: dependencies on UNC shares. Install on a local disk,
+  # then copy the real package files (--install-links avoids external symlinks).
+  $temporaryRoot = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'SapLink-dependencies-build'))
+  $temporary = Join-Path $temporaryRoot ([Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $temporary -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path $App 'package.json'),(Join-Path $App 'package-lock.json') -Destination $temporary
+  Copy-Item -LiteralPath (Join-Path $App 'vendor') -Destination $temporary -Recurse
+  & node $npmCli --prefix $temporary ci --omit=dev --ignore-scripts --install-links --os=win32 "--cpu=$Arch" --no-audit --no-fund
+  Assert-Exit "Production dependencies ($Arch)"
+  Copy-Item -LiteralPath (Join-Path $temporary 'node_modules') -Destination $App -Recurse
+  if (![IO.Path]::GetFullPath($temporary).StartsWith($temporaryRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe dependency cleanup path.' }
+  Remove-Item -LiteralPath $temporary -Recurse -Force
+}
+
 function Copy-VcRuntime([string]$Arch, [string]$Stage, [string]$NativeDirectory) {
   $bundle = Join-Path $cache "vc_redist.$Arch.exe"
   Download-Verified @($lock.vcRuntime.$Arch.url) $bundle $lock.vcRuntime.$Arch.sha256
@@ -111,13 +126,14 @@ try {
       }
     } finally { $archive.Dispose() }
     Copy-Item -LiteralPath (Join-Path $repository 'package.json'),(Join-Path $repository 'package-lock.json') -Destination $app
-    & node $npmCli --prefix $app ci --omit=dev --ignore-scripts --os=win32 "--cpu=$arch" --no-audit --no-fund
-    Assert-Exit "Production dependencies ($arch)"
+    Copy-Item -LiteralPath (Join-Path $repository 'vendor') -Destination $app -Recurse
+    Install-ProductionDependencies $app $arch
     foreach ($directory in @('dist','web','docs','skills')) {
       Copy-Item -LiteralPath (Join-Path $repository $directory) -Destination $app -Recurse
     }
     Copy-Item -LiteralPath (Join-Path $repository 'README.md') -Destination $app
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'installer-control.ps1') -Destination $stage
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'update-runner.ps1') -Destination $stage
     New-Item -ItemType Directory -Path (Join-Path $stage 'licenses') | Out-Null
     Copy-Item -LiteralPath (Join-Path $cache 'nsis-3.12\COPYING') -Destination (Join-Path $stage 'licenses\NSIS-COPYING.txt')
     $nativeDirectory = Join-Path $app "node_modules\@napi-rs\keyring-win32-$arch-msvc"

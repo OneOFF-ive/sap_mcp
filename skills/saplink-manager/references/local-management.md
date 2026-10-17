@@ -72,23 +72,4 @@ stop 等待请求与 SAP 会话清理，完成后再查 status。`SERVICE_START_
 
 ## 版本检查与升级
 
-```powershell
-saplink update check --json
-saplink update check --force --json
-```
-
-用户要求版本检查或升级维护时运行命令。命令优先读取 COS 版本清单，不可用时回退 `OneOFF-ive/saplink` 的 GitHub 最新正式 Release，无需 SAP 登录、MCP 令牌或停服；不修改 SAP 连接和客户端配置。默认复用配置目录中 `update-check.json` 的 24 小时缓存；用户要求立即重新查询时使用 `--force`。UI 和服务进程还会在启动后及每 24 小时自动检查；Web 显示新版本下载链接，前台以 stderr 提示，后台可查看配置目录的 `update-notice.json` 历史通知，不能据历史通知判断当前仍需升级。没有强制检查按钮或自动安装。`SAPLINK_AUTO_UPDATE_CHECK=0` 并重启可关闭自动检查；仅查版本时不为此启停原服务。
-
-同时检查退出码、`status` 和 `data`：
-
-- `update_available=true`：报告 `current_version`、`latest_version` 和返回的 `release_url`，让用户在发布页面选择本机架构的安装包。不自行拼接附件地址。
-- `latest_version` 非空且 `update_available=false`：报告没有更新的正式版，不表示本地版本必须与发布版相等。
-- `latest_version=null`：未找到可公开访问的正式 Release，可能尚未发布或仓库为私有；即使命令成功，也不能说“已是最新版”。
-- `cached=true`：结果来自缓存，`checked_at` 是 UTC 检查时间，不声称刚刚联网确认。
-- `UPDATE_CHECK_FAILED`：网络、超时、GitHub HTTP 错误或限流；`UPDATE_RESPONSE_INVALID`：发布元数据不符合要求。报告未能确认新版本，不反复重试，也不把缓存或错误当作更新结论。
-
-旧安装版不认识 `update check` 时，报告该版本尚无此命令，提供已知[发布入口](https://github.com/OneOFF-ive/saplink/releases)，不改用源码构建替代升级。
-
-安装、升级、修复及卸载仍由用户手动操作。实际升级前，Agent 可按用户升级意图记录原端口、版本及所需备份，正常停止可管理服务；用户完成后重新检查版本并恢复接入。仅检查更新时保持服务原状态，不自行运行安装程序。
-
-更新检查新增 `data.source`（cos/github）及 `data.downloads`（architecture、url、sha256）。COS 成功时向用户提供返回的对应架构直达下载地址，不猜 URL；不要仅提供 GitHub 发布页。`SAPLINK_UPDATE_URL` 是可选的 HTTPS 清单地址，`github` 表示仅 GitHub；更换信任源只在用户要求时执行。现有 24 小时缓存、手动安装及权限约束不变。
+版本检查、COS 自动升级、用户确认及安装结果验证统一按[版本检查与自动升级](updates.md)执行。检查到新版后，主动询问用户是否需要立即自动更新；获得同意后才安装。仅检查版本不停止服务、不下载安装包。

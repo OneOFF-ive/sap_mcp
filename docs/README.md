@@ -6,12 +6,13 @@
 | --- | --- |
 | 了解产品与主要能力 | [SapLink 产品介绍](../README.md) |
 | 安装应用、首次打开与升级卸载 | [Windows 安装指南](windows-installer.md) |
-| 自动或手动检查新版本与下载入口 | [版本检查](operations.md#检查新版本) |
+| 检查新版本与用户确认安装 | [版本检查](operations.md#检查新版本)、[确认安装](operations.md#用户确认的自动安装) |
 | agent 学习如何操作 SAP | [MCP 客户端 SAP 操作手册](mcp-client-guide.md) |
 | 管理连接、令牌、服务与日志 | [部署与运维手册](operations.md) |
 | 让终端型 AI 客户端管理本地服务 | [AI 终端管理](ai-management.md) |
 | 理解模块、会话、锁和版本保护 | [架构文档](architecture.md) |
 | 运行源码、测试与构建安装包 | [开发与构建指南](development.md) |
+| 发布正式版、配置 secrets 与排查 Actions 同步 | [发布与 GitHub Actions](releases-and-actions.md) |
 | 了解安全边界与异常锁文件恢复 | [安全说明](security.md) |
 | 开发者查阅接口与历史实现细节 | [技术参考](technical-reference.md) |
 | 下载安装包与查看版本变更 | [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases) |

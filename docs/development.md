@@ -2,6 +2,8 @@
 
 本指南面向修改源码、运行测试和制作安装包的开发者。普通用户请阅读 [Windows 安装指南](windows-installer.md)；已安装应用的日常操作统一使用 [运维手册](operations.md) 中的 `saplink` 命令。
 
+GitHub Release 附件要求、两条同步 Actions 的触发条件、secrets 和恢复步骤集中见 [发布与 GitHub Actions](releases-and-actions.md)。当前 Actions 只同步已构建的正式版附件，不承担源码构建或 push/PR 自动测试。
+
 ## 从源码运行
 
 需要 Windows、Node.js 22+ 和 npm。在项目根目录的 PowerShell 执行：
@@ -11,6 +13,8 @@ npm ci --ignore-scripts
 npm run build
 node dist/cli.js --help
 ```
+
+项目的 `vendor/adt-path-format` 通过 npm override 替换 ADT 库的通用格式化依赖，仅支持其路径所需的字符串占位符。保留 `vendor/`、锁文件和 `.npmrc` 中的 `install-links=true`；Windows 构建在生产依赖安装前复制该目录，并显式使用 `--install-links`。修改 ADT 库版本时运行 `tests/dependency-security.test.ts`，核对其格式化调用仍符合这一受限接口。
 
 这些是源码开发命令，不是安装包用户的前置步骤。后续源码 CLI 调用统一使用 `node dist/cli.js`，例如：
 
@@ -29,7 +33,7 @@ node dist/cli.js update check --json
 
 版本检查模块为 `src/updates.ts`，当前版本取自 `package.json`，默认优先读取 COS 的 `saplink/latest.json`，不可用时回退 `OneOFF-ive/saplink` 的 GitHub `releases/latest` 接口。正式标签须为语义版本（可带 `v` 前缀）；仅提示版本更高的正式发布，同号正式版高于本地预发布版。不是按字符串或发布时间比较版本；GitHub latest 指定的版本也不一定是所有标签中的最大版本。
 
-检查使用独立的 `update-check.json` 缓存，不获取 runtime/config 锁。HTTP 请求不携带 SAP 或 MCP 凭据、不跟随重定向，设置 8 秒超时；不执行安装文件。模块允许注入 fetch 和时间供离线测试，覆盖比较、缓存与强制刷新、错误响应及 CLI 文本/JSON 输出。
+版本检查使用独立的 `update-check.json` 缓存，不获取 runtime/config 锁。HTTP 请求不携带 SAP 或 MCP 凭据、不跟随重定向，每个源请求设置 8 秒超时；检查本身不执行安装文件。显式确认安装由独立的 self-update 模块处理，见本文末尾实现说明。检查模块允许注入 fetch 和时间供离线测试，覆盖比较、缓存与强制刷新、错误响应及 CLI 文本/JSON 输出。
 
 CLI postAction 为成功启动的 `ui`、`serve`、`service _run` 接入自动检查器；定时器 unref，不单独维持进程。同一进程避免检查重叠，启动时异步检查，随后每 24 小时执行并复用缓存；SIGINT/SIGTERM 取消请求并清理定时器。`SAPLINK_AUTO_UPDATE_CHECK=0` 禁用。自动失败静默，不影响 SAP；相同新版本只通知一次。受保护的 `/api/state` 暴露最近成功的自动检查结果，Web 每分钟刷新可见页面的更新提示，不触发 GitHub 查询。不注册 MCP tool。
 
@@ -151,3 +155,19 @@ node scripts/create-update-manifest.mjs --version 0.1.0 --architectures x64
 如果 Release 是由其他工作流用默认 `GITHUB_TOKEN` 创建，GitHub 通常不会再触发 release 工作流；发布流程应在附件上传完成后显式调用此 reusable workflow（`workflow_call` 并传递这两个 secrets），或手动 dispatch。主分支没有工作流/脚本时，仅配置 secrets 不会自动上传。
 
 本地隔离回归：`python .github/scripts/test-sync-cos-release.py -v`。只使用模拟安装包和内存 COS，不读取密钥或操作云端。
+
+## 自动更新实现与验证
+
+`src/self-update.ts` 负责安装版识别、强制重查版本、架构匹配、流式下载、256 MiB 上限、SHA-256 和 PE 文件头校验、任务互斥及原生助手握手。Web 的检查/安装/状态接口沿用管理 API 的 token 与同源限制；安装请求只接受待确认的版本，不接受 URL、哈希、目录或命令。下载不携带 SAP/MCP 凭据且拒绝重定向。
+
+`packaging/windows/update-runner.ps1` 随安装包放在根目录。运行时复制到用户配置目录的独立任务目录，由原生启动器创建独立隐藏控制台，避免占用待替换程序或继承终端管道。助手复核注册的安装路径、安装清单、版本资源与哈希，等待原进程正常退出后执行 NSIS `/S /D=<原目录>`，验证安装清单版本再恢复原运行方式。安装根目录、任务目录不能混用，更新器不强杀进程、不修改全局机器安装。
+
+自动安装结果异步写入 `update-install-result.json`，不是 SAP 审计日志。更新助手超时返回未知时不释放更新标记；客户端断开不能证明安装失败或成功。下载哈希来自已配置 HTTPS 发布源，不单独证明发布者身份；只为用户明确选择的版本执行安装。
+
+检查：`node --import tsx --test tests/self-update.test.ts`；浏览器需检查源代码运行下的禁用说明以及安装版的确认、进度、失败和重启提示。完整原生隔离测试：
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/update-test.ps1
+```
+
+原生测试使用临时模拟安装目录及 `Software\SapLinkInstallerTest` 注册表，不更改真实安装与用户 PATH，涵盖启动器编译、隐藏助手交接、哈希拒绝、含空格路径的真实 NSIS 静默升级、版本验证和配置保留。它需要已缓存的 NSIS 和安装图标，不能与其他占用同一测试注册表的安装测试同时运行。`-TestMode` 不由生产启动入口传递。

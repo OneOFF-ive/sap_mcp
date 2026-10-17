@@ -12,6 +12,7 @@ import type { BackendFactory } from './operations.js';
 import { cleanupLogs } from './log-cleanup.js';
 import { getAutomaticUpdate } from './updates.js';
 import { appVersion } from './version.js';
+import { SelfUpdater } from './self-update.js';
 
 const draft = connectionSchema.omit({ connection_id: true }).extend({
   write_enabled: z.boolean(),
@@ -33,7 +34,8 @@ function validationResponse(error: z.ZodError) {
 }
 
 export async function startAdmin(store: ConfigStore, credentials: Credentials, port = 8766,
-  factory: BackendFactory = (c, p) => new AdtBackend(c, p), requestExit?: () => Promise<void>) {
+  factory: BackendFactory = (c, p) => new AdtBackend(c, p), requestExit?: () => Promise<void>,
+  options: { updater?: SelfUpdater; initialMcpPort?: number } = {}) {
   const key = randomBytes(32).toString('base64url');
   const app = express();
   app.disable('x-powered-by');
@@ -42,6 +44,12 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
   let active = 0;
   let closing = false;
   let mcpPort = 8765;
+  const updater = options.updater ?? new SelfUpdater(store.directory);
+  if (options.initialMcpPort) {
+    if (!(await store.load()).tokens.length) throw new AppError('TOKEN_REQUIRED', '恢复 MCP 服务需要有效的访问令牌。');
+    runtime = await startHttp(store, new Operations(store, credentials, undefined, factory), options.initialMcpPort);
+    mcpPort = options.initialMcpPort;
+  }
   const exclusive = async <T>(action: () => Promise<T>) => {
     if (busy)
       throw new AppError('BUSY', '另一项管理操作正在执行');
@@ -104,6 +112,10 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
     next();
   });
   app.use(express.json({ limit: '16kb' }));
+  app.use('/api', (req, _res, next) => {
+    if (req.method !== 'GET' && updater.busy) return next(new AppError('BUSY', '更新任务正在执行，请等待完成。'));
+    next();
+  });
   app.get('/api/state', async (_req, res) => {
     const config = await store.load();
     res.json({
@@ -114,10 +126,29 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
         created_at
       })),
       running: Boolean(runtime),
-      update: getAutomaticUpdate() ?? null,
+      update: updater.latest && (!getAutomaticUpdate() || updater.latest.checked_at >= getAutomaticUpdate()!.checked_at)
+        ? updater.latest : getAutomaticUpdate() ?? null,
+      update_install: await updater.status(),
       mcp_port: mcpPort,
       busy
     });
+  });
+  app.post('/api/updates/check', async (req, res) => {
+    z.object({}).strict().parse(req.body ?? {});
+    const result = await exclusive(() => updater.check());
+    res.json({ update: result, update_install: await updater.status() });
+  });
+  app.get('/api/updates/status', async (_req, res) => {
+    res.json({ update: updater.latest ?? getAutomaticUpdate() ?? null, update_install: await updater.status() });
+  });
+  app.post('/api/updates/install', async (req, res) => {
+    const { version } = z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) }).strict().parse(req.body);
+    const result = await exclusive(() => updater.install(version, { mode: 'ui', ui_port: actualPort,
+      ...(runtime ? { mcp_port: mcpPort } : {}) }, async () => {
+      // The POST response is sent before the background download completes.
+      await (requestExit ? requestExit() : close());
+    }));
+    res.status(202).json({ update_install: result });
   });
   app.post('/api/connections/:id/test', async (req, res) => {
     const result = await exclusive(async () => {
@@ -293,7 +324,7 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
   const listener = await new Promise<ReturnType<typeof app.listen>>((resolve, reject) => {
     const server = app.listen(port, '127.0.0.1', () => resolve(server));
     server.once('error', reject);
-  });
+  }).catch(async error => { await runtime?.close(); throw error; });
   listener.requestTimeout = 30000;
   listener.headersTimeout = 10000;
   const address = listener.address();

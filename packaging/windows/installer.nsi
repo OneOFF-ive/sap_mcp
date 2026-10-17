@@ -40,6 +40,7 @@ VIProductVersion "${APP_VERSION}.0"
 VIAddVersionKey "ProductName" "SapLink"
 VIAddVersionKey "FileDescription" "SapLink Windows Installer"
 VIAddVersionKey "FileVersion" "${APP_VERSION}"
+VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey "LegalCopyright" "SapLink project"
 
 !define MUI_ABORTWARNING

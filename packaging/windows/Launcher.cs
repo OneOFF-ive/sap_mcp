@@ -79,6 +79,7 @@ internal static class Launcher
         try
         {
             if (arguments.Length > 0 && arguments[0] == "--internal-service-run") return SpawnService(arguments);
+            if (arguments.Length > 0 && arguments[0] == "--internal-update-run") return SpawnUpdate(arguments);
             using (Process child = Process.Start(Node(arguments)))
             {
                 child.WaitForExit();
@@ -90,6 +91,23 @@ internal static class Launcher
             Console.Error.WriteLine("SapLink could not start. Repair the installation; the bundled Node.js runtime is required.");
             return 1;
         }
+    }
+
+    private static int SpawnUpdate(string[] arguments)
+    {
+        if (arguments.Length != 3 || !Path.IsPathRooted(arguments[1]) || !Path.IsPathRooted(arguments[2]) ||
+            Path.GetFileName(arguments[1]) != "update-runner.ps1" || Path.GetFileName(arguments[2]) != "plan.json") return 1;
+        string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+        var command = new StringBuilder(Quote(powershell) + " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " +
+            Quote(arguments[1]) + " -Plan " + Quote(arguments[2]));
+        // PowerShell needs valid console handles; give it its own hidden console,
+        // with no inherited terminal/GUI pipes from the application being replaced.
+        var startup = new StartupInfo { Size = Marshal.SizeOf(typeof(StartupInfo)), Flags = 1, ShowWindow = 0 };
+        ProcessInfo process;
+        if (!CreateProcess(powershell, command, IntPtr.Zero, IntPtr.Zero, false, 0x210, IntPtr.Zero,
+            Path.GetDirectoryName(arguments[1]), ref startup, out process)) return 1;
+        CloseHandle(process.Thread); CloseHandle(process.Process);
+        return 0;
     }
 #endif
 }
