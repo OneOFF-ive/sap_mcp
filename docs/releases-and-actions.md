@@ -20,7 +20,7 @@ flowchart TD
 | 工作流 | 文件 | 目标 | Actions secret | 超时 |
 | --- | --- | --- | --- | --- |
 | Sync COS downloads | [sync-cos-downloads.yml](../.github/workflows/sync-cos-downloads.yml) | 国内更新源和下载文件 | COS_SECRET_ID、COS_SECRET_KEY | 25 分钟 |
-| Sync website downloads | [sync-website-downloads.yml](../.github/workflows/sync-website-downloads.yml) | 官网下载接收端 | SAPLINK_WEBSITE_SYNC_KEY | 20 分钟 |
+| Sync website downloads | [sync-website-downloads.yml](../.github/workflows/sync-website-downloads.yml) | 官网下载接收端 | SAPLINK_WEBSITE_SYNC_KEY | 90 分钟 |
 
 两条工作流均运行在 ubuntu-latest，仓库权限为 contents: read，只允许 `OneOFF-ive/saplink` 执行。各自使用独立 concurrency group 串行同步，cancel-in-progress=false，不互相等待；一条成功不代表另一条成功。
 
@@ -76,7 +76,17 @@ COS 工作流固定安装 cos-python-sdk-v5==1.9.44，并先运行离线同步�
 
 ### 官网下载
 
-通过 SSH 向受限接收器提交 check / sync 和 tar 数据。check 返回无需上传时仅同步元数据，否则上传包含安装包的 payload。SSH 强制校验固定主机公钥，不自动信任新的服务器公钥。
+通过 SSH 向受限接收器提交数据。check 返回无需上传时仅同步元数据；否则使用 prepare / chunk / promote 协议，每块 2 MiB，最多重试三次，并在日志显示架构和进度。重新运行工作流会复核服务器已有块的 SHA-256，跳过一致内容；缺块或损坏内容不会被发布。单块服务端时限为 180 秒，客户端为 210 秒，准备和最终切换分别为 300 秒。SSH 强制校验固定主机公钥，不自动信任新的服务器公钥。
+
+旧流程整包 SSH 上传受服务端 18 分钟总时限限制，跨境链路缓慢时会丢失传输进度。续传块保存在 `/var/lib/saplink-release-sync/staging/v<version>` 的私有目录；完整安装包按官方 SHA-256 校验，再由原接收器复核最新 Release 并原子切换 latest。成功后只删除本次已完成的暂存目录；失败时保留完整块以便重跑，不改变当前发布版本。安装目录中的凭据和站点其他文件不参与传输。
+
+首次启用续传协议需由管理员部署接收器扩展。将 [website_upload_receiver.py](../.github/scripts/website_upload_receiver.py) 和 [install-website-upload.py](../.github/scripts/install-website-upload.py) 放在服务器同一临时目录，然后执行：
+
+```sh
+sudo python3 /path/to/install-website-upload.py
+```
+
+部署脚本要求已有 `/usr/local/lib/saplink-release-sync/receive_release.py`，先检查语法并在 `/var/backups/saplink-release-sync/` 备份，再安装扩展和分派入口，保留原 check / sync / status 协议及 SSH 限制。它不会创建同步账号、密钥或更改 SSH 配置。应先部署服务端，再推送新版工作流。只有客户端代码修改时不需要重复部署；接收器扩展有变化时需重新部署。
 
 工作流最终核对 `http://118.89.185.57/downloads/latest/releases.json` 中的版本，以及各 `SapLink-win-<arch>-setup.exe` 公开入口的 Content-Length。该最终检查不是对官网公开二进制再次做完整 SHA-256 下载验证；准备阶段已校验 GitHub 原始附件。
 
@@ -92,6 +102,7 @@ COS 工作流固定安装 cos-python-sdk-v5==1.9.44，并先运行离线同步�
 | 任务成功但版本没变 | 核对 ready=false、latest 标签及 COS 已有更高版本，不把 skip 当作新版本上传成功 |
 | COS 失败 | 检查 secrets、指定前缀权限、公开读、网络和同版本内容冲突；不改哈希或覆盖二进制绕过 |
 | 官网 SSH 失败 | 检查 secret、专用账号、受限接收器和固定主机公钥；不关闭 StrictHostKeyChecking |
+| 官网传输中断或超时 | 核对日志中的具体块，确认服务端已部署续传扩展；重跑会保留并复核已完成块，不必重新上传整包；链路持续不可用时仍会失败 |
 | 官网文件在但版本验证失败 | 检查公开 releases.json 和接收器的 latest 切换；仅文件存在不足以确认同步完成 |
 | COS 成功、官网失败 | 两条流程独立；只修复并重跑失败目标，再分别核实 |
 
@@ -101,8 +112,9 @@ COS 工作流固定安装 cos-python-sdk-v5==1.9.44，并先运行离线同步�
 
 ```powershell
 python .github/scripts/test-sync-cos-release.py -v
+python .github/scripts/test-website-upload.py -v
 ```
 
-此回归使用模拟安装包和内存 COS，不读取密钥、不操作云端；需要可用的 Python。COS 工作流中额外验证已安装 SDK 的兼容性。离线测试通过不等于 Actions secrets 已配置、官网接收器已部署或云端发布成功。
+这些回归使用模拟安装包、内存 COS 和隔离暂存目录，不读取密钥、不操作云端；需要可用的 Python。COS 工作流中额外验证已安装 SDK 的兼容性。在 Linux 上可设置 `RECEIVER_MODULE` 为原接收器脚本绝对路径，额外验证拼接后的载荷能由原接收器校验并发布到测试目录。离线测试通过不等于 Actions secrets 已配置、官网接收器已部署或云端发布成功。
 
 本手册只描述仓库配置，不代表已运行线上 Actions。本地构建、安装测试和云端同步应分别记录验证结果。

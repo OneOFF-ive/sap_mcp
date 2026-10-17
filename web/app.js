@@ -8,7 +8,7 @@ let state = { connections: [], tokens: [], running: false, mcp_port: 8765 };
 let editing;
 let working = false;
 const tests = new Map();
-const labels = { connections: '系统连接', tokens: '访问令牌', service: 'MCP 服务' };
+const labels = { connections: '系统连接', tokens: '访问令牌', service: 'MCP 服务', updates: '软件更新' };
 let toastTimer;
 function toast(message, error = false) { const node = $('#toast'); node.textContent = message; node.className = error ? 'error' : '';
   node.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { node.hidden = true; }, 5000); }
