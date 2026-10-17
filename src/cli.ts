@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { open, readFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createRequire } from 'node:module';
+import { appVersion } from './version.js';
 import { ConfigStore, WindowsCredentials, connectionSchema, type Connection } from './config.js';
 import { AdtBackend } from './adt.js';
 import { Operations } from './operations.js';
@@ -23,7 +23,6 @@ import { checkForUpdate, startRuntimeUpdateChecks } from './updates.js';
 const store = new ConfigStore();
 const credentials = new WindowsCredentials();
 const jsonOutput = process.argv.includes('--json');
-const appVersion: string = createRequire(import.meta.url)('../package.json').version;
 const cli = new Command().name('saplink').description('SapLink: local SAP ADT MCP server and lifecycle manager')
   .version(appVersion).option('--json', 'Return one JSON result; never prompt in the terminal')
   .exitOverride().configureOutput({ writeErr: text => { if (!jsonOutput) process.stderr.write(text); } });

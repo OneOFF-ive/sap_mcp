@@ -11,6 +11,7 @@ import { safeError, AppError } from './errors.js';
 import type { BackendFactory } from './operations.js';
 import { cleanupLogs } from './log-cleanup.js';
 import { getAutomaticUpdate } from './updates.js';
+import { appVersion } from './version.js';
 
 const draft = connectionSchema.omit({ connection_id: true }).extend({
   write_enabled: z.boolean(),
@@ -106,6 +107,7 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
   app.get('/api/state', async (_req, res) => {
     const config = await store.load();
     res.json({
+      version: appVersion,
       connections: config.connections,
       tokens: config.tokens.map(({ id, created_at }) => ({
         id,

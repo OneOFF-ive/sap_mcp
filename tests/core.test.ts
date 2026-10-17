@@ -737,6 +737,8 @@ test('real MCP SDK HTTP client initializes, lists tools and reads source; HTTP r
     assert.equal((await fetch(url, { method: 'POST' })).status, 401);
     assert.equal((await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token.token}`, Origin: 'http://evil.test' } })).status, 403);
     await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token.token}` } } }));
+    const expectedVersion = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')).version;
+    assert.equal(client.getServerVersion()?.version, expectedVersion);
     const instructions = client.getInstructions()!;
     assert.ok(instructions.includes('untrusted data'));
     assert.ok(instructions.includes('VERSION_CONFLICT'));

@@ -66,7 +66,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/prefli
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/payload-test.ps1
 ```
 
-发布产物按 `package.json` 的版本号输出到 `outputs/installers/<version>/`，例如 `outputs/installers/0.1.0/`。每种架构只生成一个标准名称安装包及对应 `.sha256`，对应版本的发布说明也放在该目录；不同版本分别保留，同版本重打包只更新自己的目录，不影响其他版本。不再生成图标后缀副本。公开分发的文件保持版本唯一；更换图标或程序后更新版本号，避免覆盖同版本文件引起缓存混淆。安装包只包含明确选定的应用文件和生产依赖；源码、测试、本地连接配置、凭据、缓存均不打包。第三方许可随包提供：Node 位于 `runtime/LICENSE`，VC 运行库与 NSIS 位于 `licenses`，依赖许可位于各 `app/node_modules` 包中。
+发布产物按 `package.json` 的版本号输出到 `outputs/installers/<version>/`，例如 `outputs/installers/1.0.0/`。每种架构只生成一个标准名称安装包及对应 `.sha256`，对应版本的发布说明也放在该目录；不同版本分别保留，同版本重打包只更新自己的目录，不影响其他版本。不再生成图标后缀副本。公开分发的文件保持版本唯一；更换图标或程序后更新版本号，避免覆盖同版本文件引起缓存混淆。安装包只包含明确选定的应用文件和生产依赖；源码、测试、本地连接配置、凭据、缓存均不打包。第三方许可随包提供：Node 位于 `runtime/LICENSE`，VC 运行库与 NSIS 位于 `licenses`，依赖许可位于各 `app/node_modules` 包中。
 
 测试安装包单独输出到 `.saplink/installer-build/tests`，不进入发布目录。隔离安装测试使用专用临时目录和 `HKCU\Software\SapLinkInstallerTest`，不修改真实用户 PATH 或桌面；测试快捷方式放在测试安装目录内。测试会保留临时文件用于排错，不应将 `-test-setup.exe` 作为发行包分发。不同架构的测试依次执行，因为它们使用同一个测试注册表位置。
 

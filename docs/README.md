@@ -1,6 +1,6 @@
 # SapLink 文档导航
 
-适用版本：0.1.0。核对日期：2026-10-15。文档依据本仓库实现；目标系统支持范围仍由 SAP 版本、服务配置及用户权限决定。
+文档依据本仓库实现；目标系统支持范围由 SAP 版本、服务配置及用户权限决定。各版本的下载与变更记录见 [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases)。
 
 | 读者或目标 | 入口 |
 | --- | --- |
@@ -14,7 +14,7 @@
 | 运行源码、测试与构建安装包 | [开发与构建指南](development.md) |
 | 了解安全边界与异常锁文件恢复 | [安全说明](security.md) |
 | 开发者查阅接口与历史实现细节 | [技术参考](technical-reference.md) |
-| 当前版本发布信息 | [0.1.0 发布说明](release-0.1.0.md) |
+| 下载安装包与查看版本变更 | [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases) |
 
 产品名称统一为 SapLink，CLI 使用 saplink。配置目录和安装标识详见 [命名与本地数据说明](local-data.md)。
 

@@ -1,6 +1,6 @@
 # MCP 客户端 SAP 操作手册
 
-供 agent、MCP 客户端开发者和使用者阅读。适用 SapLink 0.1.0，核对日期：2026-10-15。本文描述本项目实际工具，不是任意 SAP MCP 服务的通用接口。运行时 `instructions` 和 `tools/list` 是当前工具定义的依据；不发送 schema 未定义的字段。
+供 agent、MCP 客户端开发者和使用者阅读。适用 SapLink 1.0.0，核对日期：2026-10-15。本文描述本项目实际工具，不是任意 SAP MCP 服务的通用接口。运行时 `instructions` 和 `tools/list` 是当前工具定义的依据；不发送 schema 未定义的字段。
 
 当前工具定义在 `src/tool-definitions.ts`，写操作分类在 `src/tool-policy.ts`。本次代码重构未改变 18 个工具的 JSON Schema，本文调用流程继续适用；客户端无需因文件拆分修改配置或参数。
 

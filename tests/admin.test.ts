@@ -32,6 +32,8 @@ test('local web management protects APIs and manages connections, credentials, t
     assert.ok(home.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
     assert.equal((await fetch(`${origin}/icons.js`)).status, 200);
     assert.equal((await fetch(`${origin}/api/state`)).status, 401);
+    const expectedVersion = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')).version;
+    assert.equal((await api('state')).body.version, expectedVersion);
     assert.equal((await fetch(`${origin}/api/cache/clear`, { method: 'POST', headers: { Origin: origin } })).status, 401);
     assert.equal((await api('cache/clear', 'POST')).body.cleared_sessions, 0);
     assert.equal((await fetch(`${origin}/api/logs/clear`, { method: 'POST', headers: { Origin: origin } })).status, 401);

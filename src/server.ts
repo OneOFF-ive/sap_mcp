@@ -7,11 +7,12 @@ import { safeError } from './errors.js';
 import { clientInstructions } from './client-guidance.js';
 import { toolSchemas, toolDescription, type ToolName } from './tool-definitions.js';
 import { writeTools } from './tool-policy.js';
+import { appVersion } from './version.js';
 
 export function makeMcp(operations: Operations) {
   const server = new McpServer({
     name: 'saplink',
-    version: '0.1.0'
+    version: appVersion
   }, {
     instructions: clientInstructions,
     maxToolInputElements: 2000

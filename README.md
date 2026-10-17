@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/OneOFF-ive/saplink/releases">⬇️ 下载与发布说明</a> ·
   <a href="docs/windows-installer.md">📦 安装指南</a> ·
   <a href="docs/mcp-client-guide.md">📖 客户端手册</a> ·
   <a href="docs/README.md">📚 全部文档</a>
@@ -51,16 +52,21 @@ SapLink 的图标由三个相扣的圆环构成：左右两个大圆环代表 **
 AI 客户端 → SapLink 本地 MCP 服务 → SAP ADT → SAP ABAP 系统
 ```
 
-1. **安装并打开应用**：Windows 安装包内置运行环境，无需另装 Node.js；通过快捷方式打开本地管理页面。
+1. **下载并安装**：从 [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases) 下载适合本机架构的 Windows 安装包，安装后通过快捷方式打开管理页面。安装包内置运行环境，无需另装 Node.js。
 2. **添加 SAP 连接**：输入 ADT 地址、Client、用户名和语言，在本机填写密码并测试连接。
 3. **接入 AI 客户端**：创建访问令牌、启动 MCP，将服务地址与令牌配置到客户端。
 4. **开始操作**：让 agent 先确认目标系统，再按任务读取、查询或执行已授权的开发变更。
 
 当前支持 64 位 Windows 10 1809+ / Windows 11，提供 x64 与 ARM64 安装方式。SAP 侧需要启用并可访问 ADT；AI 客户端需要支持 Streamable HTTP 和 Bearer 认证头。
 
+| 你的电脑 | 选择安装包 |
+| --- | --- |
+| Intel / AMD 64 位 Windows 电脑 | 文件名包含 `win-x64` 的 `.exe` |
+| Windows ARM64 电脑 | 文件名包含 `win-arm64` 的 `.exe` |
+
 完整步骤见 [Windows 安装指南](docs/windows-installer.md) 与 [部署与运维手册](docs/operations.md)。从源码运行与制作安装包见 [开发与构建指南](docs/development.md)。
 
-管理界面与服务启动后自动检查新版本，运行期间每 24 小时检查一次；复用 24 小时缓存。有更新时管理页面显示下载链接，前台服务通过 stderr 提示，配置目录保存 `update-notice.json` 供后台运行时查看。不自动下载或安装。设置 `SAPLINK_AUTO_UPDATE_CHECK=0` 后重新启动应用可关闭自动检查。手动检查使用 `saplink update check`，`--force` 跳过缓存；源码运行使用 `node dist/cli.js update check`。
+应用会自动检查新版本并提示下载，也可运行 `saplink update check` 手动检查；不会自动下载或安装。详细设置见 [版本检查](docs/operations.md#检查新版本)。各版本的变更记录见 [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases)。
 
 ## 🛡️ 变更有明确的步骤
 
@@ -79,7 +85,7 @@ SapLink 是开发与查询工具，不是完整 IDE。目前不提供调试、�
 | 运行源码、测试与制作安装包 | [开发与构建指南](docs/development.md) |
 | 理解架构与模块职责 | [架构文档](docs/architecture.md) |
 | 了解认证、数据和安全边界 | [安全说明](docs/security.md) |
-| 查看当前版本发布信息 | [0.1.0 发布说明](docs/release-0.1.0.md) |
+| 下载安装包与查看版本变更 | [GitHub Releases](https://github.com/OneOFF-ive/saplink/releases) |
 | 查阅完整接口与技术细节 | [技术参考](docs/technical-reference.md) |
 
 所有文档见 [文档导航](docs/README.md)。

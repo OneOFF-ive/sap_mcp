@@ -123,6 +123,22 @@ test('automatic checks can be disabled and failures stay isolated', async () => 
   } finally { disabled.stop(); enabled.stop(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test('stopping during a pending cache read prevents a new network request', async () => {
+  const directory = await temporaryDirectory();
+  let calls = 0;
+  const automatic = startAutomaticUpdates('0.1.0', directory, {
+    fetcher: (async () => { calls++; throw new Error('offline'); }) as typeof fetch
+  });
+  try {
+    await automatic.initialCheck;
+    assert.equal(calls, 1);
+    const pending = automatic.check();
+    automatic.stop();
+    await pending;
+    assert.equal(calls, 1);
+  } finally { automatic.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test('automatic timer schedules later checks without blocking the caller', async () => {
   const directory = await temporaryDirectory();
   let calls = 0;

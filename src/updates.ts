@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from './errors.js';
-import { createRequire } from 'node:module';
+import { appVersion } from './version.js';
 
 const repository = 'OneOFF-ive/saplink';
 const releasesUrl = `https://github.com/${repository}/releases`;
@@ -43,6 +43,8 @@ export async function checkForUpdate(currentVersion: string, directory: string,
   }
   let release = cached?.release;
   if (!cached) {
+    // Stopping may happen while the asynchronous cache read is still pending.
+    options.signal?.throwIfAborted();
     let response: Response;
     try {
       response = await (options.fetcher ?? fetch)(`https://api.github.com/repos/${repository}/releases/latest`, {
@@ -108,11 +110,10 @@ export function startAutomaticUpdates(currentVersion: string, directory: string,
 }
 
 export function startRuntimeUpdateChecks(directory: string) {
-  const version: string = createRequire(import.meta.url)('../package.json').version;
-  return startAutomaticUpdates(version, directory, {
+  return startAutomaticUpdates(appVersion, directory, {
     disabled: process.env.SAPLINK_AUTO_UPDATE_CHECK === '0',
     notify: async result => {
-      console.error(`SapLink ${result.latest_version} is available (current ${version}). Download: ${result.release_url}`);
+      console.error(`SapLink ${result.latest_version} is available (current ${appVersion}). Download: ${result.release_url}`);
       try {
         await mkdir(directory, { recursive: true });
         await writeFile(join(directory, 'update-notice.json'), JSON.stringify(result, null, 2), { mode: 0o600 });

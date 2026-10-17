@@ -1,6 +1,6 @@
 # SapLink 架构
 
-本文说明 SapLink 0.1.0 的模块、接口和操作流程。产品介绍见 [README](../README.md)，安装与使用步骤见 [部署与运维手册](operations.md)。CLI 入口和包名为 saplink；配置目录、凭据服务名、环境变量和安装登记标识见[命名与本地数据](local-data.md)。
+本文说明 SapLink 1.0.0 的模块、接口和操作流程。产品介绍见 [README](../README.md)，安装与使用步骤见 [部署与运维手册](operations.md)。CLI 入口和包名为 saplink；配置目录、凭据服务名、环境变量和安装登记标识见[命名与本地数据](local-data.md)。
 
 文档核对日期：2026-10-15。客户端操作见 [MCP 客户端手册](mcp-client-guide.md)，部署与排障见 [运维手册](operations.md)。本文描述实现，不表示所有功能已在每个 SAP 版本验证。
 

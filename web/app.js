@@ -51,6 +51,7 @@ function renderUpdate() {
   }
 }
 function render() {
+  $('#app-version').textContent = state.version ? `SapLink ${state.version}` : 'SapLink';
   renderUpdate();
   const query = $('#search').value.toLowerCase();
   const connections = state.connections.filter(c => [c.name, c.base_url, c.username].some(v => v.toLowerCase().includes(query)));
