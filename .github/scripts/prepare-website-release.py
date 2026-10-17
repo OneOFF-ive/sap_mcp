@@ -108,6 +108,13 @@ def main():
 
     payload = ROOT / 'installers.tar'
     encoded = (json.dumps(manifest, indent=2) + '\n').encode()
+    manifest_path = ROOT / 'releases.json'
+    manifest_path.write_bytes(encoded)
+    metadata_payload = ROOT / 'metadata.tar'
+    with tarfile.open(metadata_payload, 'w') as archive:
+        entry = tarfile.TarInfo('releases.json')
+        entry.size = len(encoded)
+        archive.addfile(entry, io.BytesIO(encoded))
     with tarfile.open(payload, 'w') as archive:
         entry = tarfile.TarInfo('releases.json')
         entry.size = len(encoded)
@@ -115,7 +122,7 @@ def main():
         for asset in manifest['platforms'].values():
             archive.add(ROOT / asset['filename'], arcname=asset['filename'], recursive=False)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-        output.write(f'ready=true\nversion={version}\npayload={payload}\n')
+        output.write(f'ready=true\nversion={version}\npayload={payload}\nmetadata={metadata_payload}\nmanifest={manifest_path}\n')
 
 
 if __name__ == '__main__':
