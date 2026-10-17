@@ -1,0 +1,95 @@
+name: Sync website downloads
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Stable release tag to sync; leave empty for latest
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      release_tag:
+        required: false
+        type: string
+    secrets:
+      SAPLINK_WEBSITE_SYNC_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saplink-website-download-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'OneOFF-ive/saplink' && (github.event_name != 'release' || !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted synchronization script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Download and verify the official release
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+        run: python3 .github/scripts/prepare-website-release.py
+
+      - name: Upload to the restricted website receiver
+        if: steps.prepare.outputs.ready == 'true'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SAPLINK_WEBSITE_SYNC_KEY }}
+          PAYLOAD: ${{ steps.prepare.outputs.payload }}
+          METADATA: ${{ steps.prepare.outputs.metadata }}
+          MANIFEST: ${{ steps.prepare.outputs.manifest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY"
+          umask 077
+          key="$RUNNER_TEMP/saplink-sync-key"
+          hosts="$RUNNER_TEMP/saplink-known-hosts"
+          trap 'rm -f "$key" "$hosts"' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$key"
+          unset SSH_PRIVATE_KEY
+          printf '%s\n' '118.89.185.57 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINE72nJcd/l97GmHpxJ1UXLwLjR6J4ZMl/3+0IO/RiCl' > "$hosts"
+          options=(-T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$hosts"
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none)
+          probe=$(ssh "${options[@]}" saplinksync@118.89.185.57 check < "$MANIFEST")
+          need_upload=$(printf '%s' "$probe" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["need_upload"]).lower())')
+          if [ "$need_upload" = false ]; then
+            echo 'Official installers already verified on the server; using metadata-only synchronization.'
+            PAYLOAD="$METADATA"
+          fi
+          ssh "${options[@]}" saplinksync@118.89.185.57 sync < "$PAYLOAD"
+
+      - name: Verify public download endpoints
+        if: steps.prepare.outputs.ready == 'true'
+        env:
+          EXPECTED_VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          url = 'http://118.89.185.57/downloads/latest/'
+          with urllib.request.urlopen(url + 'releases.json', timeout=30) as response:
+              manifest = json.load(response)
+          if manifest['version'] != os.environ['EXPECTED_VERSION']:
+              raise SystemExit('Public version verification failed')
+          for arch, asset in manifest['platforms'].items():
+              request = urllib.request.Request(url + f'SapLink-win-{arch}-setup.exe', method='HEAD')
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  if int(response.headers['Content-Length']) != asset['size']:
+                      raise SystemExit('Public installer size verification failed')
+          print('Website download synchronization verified: v' + manifest['version'])
+          PY
