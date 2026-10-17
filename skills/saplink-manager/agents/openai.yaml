@@ -1,4 +1,4 @@
 interface:
   display_name: "SapLink 管理助手"
-  short_description: "通过本机 CLI 安装、配置、诊断及启停 SapLink，安全引导用户录入凭据"
-  default_prompt: "Use $saplink-manager to diagnose and manage my local SapLink installation."
+  short_description: "管理已安装的 SapLink，自动配置当前 Agent 的 MCP 接入并完成 SAP 查询与开发任务"
+  default_prompt: "使用 $saplink-manager 检查已安装的 SapLink，为当前 AI 客户端配置 saplink-mcp，并完成我的 SAP 任务；未安装时提醒我手动安装。"

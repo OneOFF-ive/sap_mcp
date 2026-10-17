@@ -18,6 +18,7 @@ import { installationStatus, doctor } from './diagnostics.js';
 import { startService, stopService, restartService, serviceStatus, clearServiceCache, runManagedService, reportStartupFailure } from './service.js';
 import { promptLocalPassword } from './password-prompt.js';
 import { cleanupLogs, retentionDays } from './log-cleanup.js';
+import { checkForUpdate, startRuntimeUpdateChecks } from './updates.js';
 
 const store = new ConfigStore();
 const credentials = new WindowsCredentials();
@@ -26,6 +27,13 @@ const appVersion: string = createRequire(import.meta.url)('../package.json').ver
 const cli = new Command().name('saplink').description('SapLink: local SAP ADT MCP server and lifecycle manager')
   .version(appVersion).option('--json', 'Return one JSON result; never prompt in the terminal')
   .exitOverride().configureOutput({ writeErr: text => { if (!jsonOutput) process.stderr.write(text); } });
+
+cli.hook('postAction', (_command, action) => {
+  if (!['ui', 'serve', '_run'].includes(action.name())) return;
+  const updates = startRuntimeUpdateChecks(store.directory);
+  process.once('SIGINT', updates.stop);
+  process.once('SIGTERM', updates.stop);
+});
 
 async function mutate<T>(action: () => Promise<T>, connectionChange = true): Promise<T> {
   const releaseRuntime = connectionChange ? await acquireLease(store.directory, 'runtime.lock') : undefined;
@@ -93,6 +101,19 @@ async function connectionInput(name: string, options: ConnectionOptions, old?: C
 
 cli.command('version').description('Show the current application version; supports --json')
   .action(() => jsonOutput ? printSuccess({ version: appVersion }, true) : console.log(appVersion));
+
+cli.command('update').description('Check releases without downloading or installing files')
+  .command('check').option('--force', 'Bypass the 24-hour release metadata cache')
+  .action(async options => {
+    const result = await checkForUpdate(appVersion, store.directory, { force: Boolean(options.force) });
+    if (jsonOutput) printSuccess(result, true);
+    else {
+      console.log(`SapLink ${result.current_version}; latest stable: ${result.latest_version ?? 'unknown'}`);
+      console.log(result.message);
+      console.log(`Release / download page: ${result.release_url}`);
+      if (result.cached) console.log('Using cached metadata; use --force to check GitHub again.');
+    }
+  });
 
 cli.command('status').description('Inspect configuration and process state without returning credentials')
   .action(async () => printSuccess(await installationStatus(store), jsonOutput));

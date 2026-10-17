@@ -60,6 +60,8 @@ AI 客户端 → SapLink 本地 MCP 服务 → SAP ADT → SAP ABAP 系统
 
 完整步骤见 [Windows 安装指南](docs/windows-installer.md) 与 [部署与运维手册](docs/operations.md)。从源码运行与制作安装包见 [开发与构建指南](docs/development.md)。
 
+管理界面与服务启动后自动检查新版本，运行期间每 24 小时检查一次；复用 24 小时缓存。有更新时管理页面显示下载链接，前台服务通过 stderr 提示，配置目录保存 `update-notice.json` 供后台运行时查看。不自动下载或安装。设置 `SAPLINK_AUTO_UPDATE_CHECK=0` 后重新启动应用可关闭自动检查。手动检查使用 `saplink update check`，`--force` 跳过缓存；源码运行使用 `node dist/cli.js update check`。
+
 ## 🛡️ 变更有明确的步骤
 
 连接默认关闭写入。启用后，SapLink 通过 SAP 权限、对象锁和源码版本检查约束修改，并将保存、语法检查和激活分开处理。SAP 密码保存在 Windows 凭据管理器，MCP 访问令牌独立管理。

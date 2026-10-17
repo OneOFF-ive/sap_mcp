@@ -6,6 +6,8 @@
 
 ## 1. 目标与范围
 
+版本检查由 `src/updates.ts` 提供：手动命令及长期运行的 CLI/UI 共用 GitHub 正式 Release 检查与 24 小时缓存。启动后异步检查，进程内每 24 小时调度；不创建系统任务。新版本通过 stderr 和配置目录的 `update-notice.json` 提示，并经受保护的管理状态接口提供给 Web。该流程不经过 MCP 或 SAP ADT，不持有配置锁，不自动下载安装。`SAPLINK_AUTO_UPDATE_CHECK=0` 可关闭自动检查。命令与缓存规则见 [版本检查](operations.md#检查新版本)。
+
 提供不依赖 VS Code 的本地 Web 管理界面与 CLI，通过 HTTP/HTTPS ADT 访问 SAP ABAP 系统，并向 agent 提供 Streamable HTTP MCP tools。后端 HTTPS 沿用默认 TLS 校验，不自动降级；本机管理与 MCP 监听仍使用 loopback HTTP。
 
 当前功能包括：

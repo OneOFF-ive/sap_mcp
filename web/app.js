@@ -33,7 +33,25 @@ function buttonIcon(name, title, action, disabled = false, danger = false) {
   button.onclick = action; return button;
 }
 function badge(text, kind) { return element('span', text, `badge ${kind}`); }
+function renderUpdate() {
+  let updateNotice = $('#update-notice');
+  if (!updateNotice) {
+    updateNotice = element('p', undefined, 'muted');
+    updateNotice.id = 'update-notice';
+    updateNotice.setAttribute('role', 'status');
+    document.querySelector('footer').before(updateNotice);
+  }
+  updateNotice.hidden = !state.update?.update_available;
+  updateNotice.replaceChildren();
+  if (state.update?.update_available) {
+    const link = element('a', `SapLink ${state.update.latest_version} 可用，查看发布与下载`);
+    link.href = state.update.release_url;
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    updateNotice.append(link);
+  }
+}
 function render() {
+  renderUpdate();
   const query = $('#search').value.toLowerCase();
   const connections = state.connections.filter(c => [c.name, c.base_url, c.username].some(v => v.toLowerCase().includes(query)));
   $('#connection-count').textContent = state.connections.length;
@@ -195,3 +213,9 @@ $('#copy-token').onclick = () => copy($('#new-token').value);
 icons();
 if (!adminKey) $('#locked').hidden = false;
 else refresh().catch(error => toast(error.message, true));
+
+setInterval(async () => {
+  if (!adminKey || document.hidden) return;
+  try { const latest = await api('state'); state.update = latest.update; renderUpdate(); }
+  catch { /* Existing page actions report session and connection failures. */ }
+}, 60000);

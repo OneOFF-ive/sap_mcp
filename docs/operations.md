@@ -56,6 +56,16 @@ saplink service restart --json
 
 后台命令只管理自己创建的实例，不会结束前台 UI 或其他进程。切换方式前先正常退出原所有者。更多机器可读参数见 [AI 终端管理](ai-management.md)。
 
+## 检查新版本
+
+检查新版本使用 `saplink update check`，机器可读结果使用 `saplink update check --json`。
+命令查询 GitHub 仓库 `OneOFF-ive/saplink` 的最新正式 Release，显示当前版本、最新版本和发布下载页面；不下载、不安装，也不停止 SAP 服务。
+检查结果在配置目录的 `update-check.json` 中缓存 24 小时，使用 `saplink update check --force` 立即重新查询。
+网络失败或 GitHub 限流会报告检查失败，不影响正在运行的服务。没有公开正式 Release（包括仓库为私有的情况）时会明确提示，不能据此判断已是最新版。
+`ui`、`serve` 和托管后台服务在启动成功后异步检查，之后每 24 小时检查一次，复用上述缓存。程序未运行时不会检查，不创建系统计划任务。新版本在管理页面底部显示下载链接（页面可见时每分钟刷新状态），前台服务通过 stderr 提示；新版本通知同时保存到配置目录的 `update-notice.json`，后台服务不弹 Windows 通知。同一进程对同一个新版本只输出一次提示。失败或无更新时保持安静，不阻止启动或 SAP 操作，下一个周期再试。
+
+设置环境变量 `SAPLINK_AUTO_UPDATE_CHECK=0` 并重新启动应用或服务可关闭自动检查；不影响手动命令。管理页面当前没有强制检查按钮，也没有自动下载、安装或重启。
+
 ## 4. 清理连接缓存
 
 管理界面的“MCP 服务”页提供“清理连接缓存”按钮；后台服务可使用 `saplink cache clear --json`。

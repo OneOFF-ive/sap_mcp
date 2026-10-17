@@ -18,6 +18,7 @@ node dist/cli.js --help
 node dist/cli.js ui
 node dist/cli.js status --json
 node dist/cli.js doctor --json
+node dist/cli.js update check --json
 ```
 
 `node dist/cli.js ui` 在前台运行，保持终端开启，用 Ctrl+C 正常退出；关闭浏览器不会结束进程。`start-ui.cmd` 是源码目录的便捷入口。源码与已安装应用默认共用用户配置目录，不要同时启动；需要隔离测试时使用专用 `SAPLINK_CONFIG_DIR` 和 `SAPLINK_LOG_DIR`。
@@ -25,6 +26,14 @@ node dist/cli.js doctor --json
 运维手册中的 `saplink <参数>` 对应项目目录内的 `node dist/cli.js <参数>`。`npm start -- <参数>` 也是项目脚本入口，但不用于用户运维示例；自动化优先直接运行 Node CLI，避免 npm 附加输出影响 JSON 解析。
 
 ## 测试与接口维护
+
+版本检查模块为 `src/updates.ts`，当前版本取自 `package.json`，更新来源固定为 `OneOFF-ive/saplink` 的 GitHub `releases/latest` 接口。正式标签须为语义版本（可带 `v` 前缀）；仅提示版本更高的正式发布，同号正式版高于本地预发布版。不是按字符串或发布时间比较版本；GitHub latest 指定的版本也不一定是所有标签中的最大版本。
+
+检查使用独立的 `update-check.json` 缓存，不获取 runtime/config 锁。HTTP 请求不携带 SAP 或 MCP 凭据、不跟随重定向，设置 8 秒超时；不执行安装文件。模块允许注入 fetch 和时间供离线测试，覆盖比较、缓存与强制刷新、错误响应及 CLI 文本/JSON 输出。
+
+CLI postAction 为成功启动的 `ui`、`serve`、`service _run` 接入自动检查器；定时器 unref，不单独维持进程。同一进程避免检查重叠，启动时异步检查，随后每 24 小时执行并复用缓存；SIGINT/SIGTERM 取消请求并清理定时器。`SAPLINK_AUTO_UPDATE_CHECK=0` 禁用。自动失败静默，不影响 SAP；相同新版本只通知一次。受保护的 `/api/state` 暴露最近成功的自动检查结果，Web 每分钟刷新可见页面的更新提示，不触发 GitHub 查询。不注册 MCP tool。
+
+构建后可单独运行 `node --import tsx --test tests/updates.test.ts`。模拟测试不证明真实 GitHub 可达；发布前还需在可联网环境验证 `node dist/cli.js update check --force --json`，并确认新安装包已包含该功能。
 
 ```powershell
 npm run build

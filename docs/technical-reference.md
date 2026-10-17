@@ -8,6 +8,8 @@ Windows 本地 Web 管理界面 + Streamable HTTP MCP 服务，通过 HTTP ADT �
 
 ## 文档入口
 
+本地版本查询使用 `saplink version`；远程更新检查使用 `saplink update check`，只提示正式版和下载页面。命令及错误语义见 [AI 管理说明](ai-management.md#检查新版本)，缓存位置见 [本地数据](local-data.md)，模块实现与离线验证见 [开发指南](development.md#测试与接口维护)。它不是 SAP MCP tool，不需要连接目标 SAP。
+
 - [文档导航](README.md)：按使用者和任务选择阅读入口。
 - [MCP 客户端 SAP 操作手册](mcp-client-guide.md)：供 agent 和客户端开发者快速学习 tools、SAP 概念、操作步骤和错误恢复。
 - [部署与运维手册](operations.md)：安装、连接、认证、启停、升级和故障排查。

@@ -20,6 +20,21 @@ status 不输出密码、MCP 令牌、后台控制令牌或进程命令行。doc
 
 `saplink version` 与 `saplink --version` 输出当前应用版本号；`saplink version --json` 在 `data.version` 中返回版本，供 AI 客户端解析。它读取本地安装的版本，不访问网络查询更新。
 
+## 检查新版本
+
+```powershell
+saplink update check --json
+saplink update check --force --json
+```
+
+按用户的更新检查或升级请求执行。默认查询 GitHub 最新正式 Release，结果缓存 24 小时；`--force` 强制联网刷新。此命令不要求 SAP 登录、MCP 服务运行或令牌，不停止服务、不自动下载或安装。长期运行的 UI、前台或后台服务还会在启动后及每 24 小时自动检查，管理页面显示下载链接，前台以 stderr 提示，同时将最近新版本通知保存至配置目录的 `update-notice.json`。该文件为历史通知，不代表当前仍需升级。`SAPLINK_AUTO_UPDATE_CHECK=0` 并重启可关闭自动检查；不为检查版本启动或重启原本未运行的服务。
+
+成功结果的 `data` 包含 `current_version`、`latest_version`、`update_available`、`release_url`、`published_at`、`checked_at`、`cached`、`message`。`checked_at` 是 UTC 时间；`cached=true` 时不是本次联网时间。发现更新时向用户提供返回的发布页面，由用户选择 x64 或 ARM64 安装包，不猜附件 URL。
+
+`latest_version=null` 表示没有可公开访问的正式 Release（也可能是私有仓库），不能将 `update_available=false` 解读为已是最新版。有有效最新版本但没有更新时，也可能是本地开发版本高于发布版。预发布和草稿不会作为更新推荐。
+
+网络、超时、限流及其他 GitHub HTTP 错误返回 `UPDATE_CHECK_FAILED`；无效元数据返回 `UPDATE_RESPONSE_INVALID`，均为 `status=error`、退出 1。失败不使用旧缓存冒充联网结果，不影响现有服务；不反复重试。旧版 CLI 不认识命令时，引导查看[发布页面](https://github.com/OneOFF-ive/saplink/releases)。实际安装仍由用户手动完成。
+
 ## 缓存与日志清理
 
 历史审计日志使用 `saplink logs clear --older-than-days 30 --json` 先预览，用户意图包含删除时再加 `--yes`。默认保留 30 天，0 仍保留当天日志。检查 `deleted_files`、`deleted_bytes`、`failed_files` 和退出码，部分失败不应宣称全部成功；不要将审计记录、令牌文件或配置当作普通缓存随意删除。
@@ -78,8 +93,14 @@ saplink token revoke TOKEN_ID --json
 
 client-config 验证令牌属于当前配置且尚未撤销，再导出 `transport`、`url`、`headers.Authorization`。这只是产品无关连接参数，不是保证适用于 Codex、WorkBuddy 等所有客户端的完整设置文件；AI 应核对目标客户端已有配置格式，保留其他服务器，并在本地脚本内读写令牌，不打印或上传文件。创建参数文件不代表客户端已成功连接。令牌撤销不会删除已写入文件的副本。
 
-## 管理 skill 与升级
+## 一个 skill 完成配置、接入与 SAP 工作
 
-项目附带 [saplink-manager](../skills/saplink-manager/SKILL.md)，为终端型 AI 提供安装、配置、启停、诊断、升级和卸载边界。它不要求 MCP 服务预先运行，也不会执行 SAP 业务写入。Codex 的个人安装位置为 `%USERPROFILE%\.codex\skills\saplink-manager`；其他客户端按其 skill 导入方式使用这份说明。
+项目附带 [saplink-manager](../skills/saplink-manager/SKILL.md)，面向具有本机终端能力的 AI 客户端。用户手动安装 SapLink 后，Agent 负责连接与凭据录入引导、令牌管理、服务启停、给当前客户端配置 `saplink-mcp`、验证 MCP，以及按用户意图执行 SAP 查询或 ABAP 开发。不要求 MCP 预先运行；检测到未安装时提醒用户手动安装，不下载安装包或通过构建源码替代安装。
 
-升级由 AI 在用户指定版本和目录内完成：记录当前版本及本地改动、停止已管理实例、更新依赖和构建、测试后恢复原端口。不要强制丢弃未提交改动；构建失败应保留现场并报告真实运行状态。自动 Git 回滚、客户端专属配置写入、Windows Service 注册以及系统软件安装没有隐藏在这些 CLI 命令中。
+将整个技能目录（包括 `references`、`agents`）导入客户端。Codex 默认个人位置为 `%USERPROFILE%\.codex\skills\saplink-manager`，自定义 `CODEX_HOME` 时使用其 skills 目录。用户可以直接说“帮我配置 SapLink 并连接这个 SAP 系统”“查询物料”“修改这个 ABAP 程序”，由 Agent 按需读取配置管理、客户端接入或 SAP 工具说明。不要只分发 SKILL.md 而遗漏引用文件。
+
+客户端新增条目默认名为 `saplink-mcp`，已有同服务条目可复用。Agent 在本机私有文件内转存认证头，合并当前客户端支持的配置，不要求用户复制令牌或手写 TOML/JSON；保留其他服务器及审批策略。Codex 字段及示例见 [客户端接入说明](../skills/saplink-manager/references/client-setup.md)，其他产品需核实其真实配置入口。
+
+分别验证配置写入、MCP 初始化、当前会话工具可见及目标 SAP 操作成功。客户端不支持热加载时可能仍需用户重载或开启新会话；密码仍由用户在本机窗口录入。远程或容器中的 Agent 不能直接通过自身 loopback 连接用户 Windows 服务，不能把这些前提隐瞒为“已全部接入”。
+
+技能不负责安装、升级安装包或卸载程序；Agent 可诊断、准备所需备份及正常停服，用户手动操作后再检查并恢复原端口及客户端接入。连接写开关与 SAP 具体变更遵循用户意图和 SAP 权限。后台托管不等于 Windows Service 或开机自启。

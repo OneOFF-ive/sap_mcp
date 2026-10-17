@@ -1,5 +1,11 @@
 # Security Notes
 
+## Release checks
+
+`saplink update check` queries the public GitHub latest-release endpoint for `OneOFF-ive/saplink`. Running UI and service processes also check asynchronously after startup and every 24 hours, reusing the metadata cache. Set `SAPLINK_AUTO_UPDATE_CHECK=0` before restarting to disable automatic checks; no OS scheduled task is installed. Requests send no SAP credentials, MCP tokens, connection configuration or query data. GitHub receives ordinary network request metadata. Checks use an 8-second timeout and reject redirects. Release metadata is cached separately for 24 hours and cache write failure does not invalidate a successful network check. Automatic failures remain quiet and do not interrupt SAP operations; results in the management API require its existing authentication.
+
+The command only reports a validated HTTPS GitHub release-page URL and version metadata. It does not download, execute, install or verify release binaries, and does not establish publisher authenticity or installer integrity. Installation and signature/hash checks remain separate. A missing public release, network failure or rate limit must not be reported as proof that the installation is up to date.
+
 ## AI lifecycle CLI (2026-10-16)
 
 The lifecycle manager serializes its commands with a separate lease and uses the existing runtime/config leases. Read-only lease inspection never reclaims locks. A managed instance is identified by PID, process start time via its runtime lease, a lease nonce and an authenticated control response. Stop uses a dedicated loopback control listener, requires a separate random token, rejects Origin and unexpected Host, and never kills a PID. This listener is not exposed as an MCP tool. Its metadata file contains a control secret and must remain private to the current OS user; mode 0600 is requested, and Windows access control still depends on directory ACLs. Treat custom configuration directories as sensitive.

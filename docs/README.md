@@ -6,6 +6,7 @@
 | --- | --- |
 | 了解产品与主要能力 | [SapLink 产品介绍](../README.md) |
 | 安装应用、首次打开与升级卸载 | [Windows 安装指南](windows-installer.md) |
+| 自动或手动检查新版本与下载入口 | [版本检查](operations.md#检查新版本) |
 | agent 学习如何操作 SAP | [MCP 客户端 SAP 操作手册](mcp-client-guide.md) |
 | 管理连接、令牌、服务与日志 | [部署与运维手册](operations.md) |
 | 让终端型 AI 客户端管理本地服务 | [AI 终端管理](ai-management.md) |

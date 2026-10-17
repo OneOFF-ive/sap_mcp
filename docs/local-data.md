@@ -6,6 +6,8 @@
 | --- | --- |
 | 程序安装目录 | `%LOCALAPPDATA%\Programs\SapLink` |
 | 连接配置和令牌哈希 | `%APPDATA%\saplink\config.json` |
+| 更新检查缓存 | `%APPDATA%\saplink\update-check.json`，随 `SAPLINK_CONFIG_DIR` 更改 |
+| 最近新版本通知 | `%APPDATA%\saplink\update-notice.json`，仅自动发现更新时写入；历史通知不代表当前仍需升级 |
 | 操作日志 | `%LOCALAPPDATA%\saplink\logs` |
 | 配置目录环境变量 | `SAPLINK_CONFIG_DIR` |
 | 日志目录环境变量 | `SAPLINK_LOG_DIR` |
@@ -16,6 +18,8 @@
 | 源码测试与构建缓存 | 项目目录中的 `.saplink/` |
 
 使用 `saplink status --json` 或 `saplink doctor --json` 核实当前使用的配置目录。密码保存在 Windows 凭据管理器，不写入配置文件。
+
+更新缓存只保存 GitHub 发布元数据和检查时间，不含 SAP 凭据、连接或查询结果。有效期为 24 小时；损坏或过期后重新查询，无法写入缓存时仍返回本次检查结果。`saplink update check --force` 可跳过缓存；`saplink cache clear` 只清理 SAP 会话，不清理此文件。
 
 0.1.0 是首个正式版本，只使用上述名称和标识，不提供开发阶段旧名称、旧目录或旧凭据标识的自动迁移。卸载保留用户配置、令牌、日志、凭据和未登记文件。
 

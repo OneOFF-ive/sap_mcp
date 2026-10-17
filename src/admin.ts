@@ -10,6 +10,7 @@ import { acquireLease } from './lease.js';
 import { safeError, AppError } from './errors.js';
 import type { BackendFactory } from './operations.js';
 import { cleanupLogs } from './log-cleanup.js';
+import { getAutomaticUpdate } from './updates.js';
 
 const draft = connectionSchema.omit({ connection_id: true }).extend({
   write_enabled: z.boolean(),
@@ -111,6 +112,7 @@ export async function startAdmin(store: ConfigStore, credentials: Credentials, p
         created_at
       })),
       running: Boolean(runtime),
+      update: getAutomaticUpdate() ?? null,
       mcp_port: mcpPort,
       busy
     });
