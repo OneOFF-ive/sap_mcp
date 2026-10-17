@@ -1,6 +1,6 @@
 {
   "name": "saplink",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Local HTTP MCP server for SAP ABAP development",
@@ -13,6 +13,7 @@
     "dev": "node --import tsx src/cli.ts",
     "pretest": "npm run build",
     "package:windows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/build.ps1",
+    "release:windows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/release.ps1",
     "test:installer": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/smoke-test.ps1",
     "test": "node --import tsx --test tests/*.test.ts"
   },

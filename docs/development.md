@@ -66,6 +66,30 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/prefli
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging/windows/payload-test.ps1
 ```
 
+### 更新版本并打包
+
+使用发布脚本传入目标版本即可同步更新 `package.json`、`package-lock.json`，执行项目测试并生成安装包：
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/release.ps1 -Version 1.0.1
+# x64 构建机只打包 x64
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/release.ps1 -Version 1.0.1 -Architecture x64
+# 已完成测试时，重新编译并打包，跳过测试
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/release.ps1 -Version 1.0.1 -Architecture x64 -SkipTests
+```
+
+脚本按自身路径定位项目，从其他目录调用时请传入脚本的完整路径。项目位于普通盘符路径时，也可使用简写 `npm run release:windows -- 1.0.1`；项目位于 `\\psf\...` 等 UNC 共享目录时，使用上面的 PowerShell 命令，避免 `npm.cmd` 因 CMD 不支持 UNC 工作目录而找不到项目。
+
+版本必须为 `主版本.次版本.修订号`，例如 `1.0.1`，每段为 0–65535 的整数；不接受 `v` 前缀、前导零或预发布后缀。默认构建 x64、ARM64，执行平台要求见下文。产物放入 `outputs/installers/<version>/`，并核对 SHA256；同版本可重新打包，不改动其他版本目录。
+
+脚本不创建 Git 提交或标签，不运行 npm 版本生命周期钩子，也不上传发布。构建失败时保留已更新的版本号，修复错误后可使用同一命令重试；目录内存在部分文件不代表发布成功，应以脚本成功结束为准。完整安装、升级和卸载验证仍使用上面的 `smoke-test.ps1` 单独执行，发布说明需按实际变更和验证结果编写。
+
+发布脚本自身的隔离回归检查如下。检查使用临时项目、真实 npm 版本更新和模拟构建，不更改本项目版本，也不生成真实安装包：
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File packaging/windows/release-test.ps1
+```
+
 发布产物按 `package.json` 的版本号输出到 `outputs/installers/<version>/`，例如 `outputs/installers/1.0.0/`。每种架构只生成一个标准名称安装包及对应 `.sha256`，对应版本的发布说明也放在该目录；不同版本分别保留，同版本重打包只更新自己的目录，不影响其他版本。不再生成图标后缀副本。公开分发的文件保持版本唯一；更换图标或程序后更新版本号，避免覆盖同版本文件引起缓存混淆。安装包只包含明确选定的应用文件和生产依赖；源码、测试、本地连接配置、凭据、缓存均不打包。第三方许可随包提供：Node 位于 `runtime/LICENSE`，VC 运行库与 NSIS 位于 `licenses`，依赖许可位于各 `app/node_modules` 包中。
 
 测试安装包单独输出到 `.saplink/installer-build/tests`，不进入发布目录。隔离安装测试使用专用临时目录和 `HKCU\Software\SapLinkInstallerTest`，不修改真实用户 PATH 或桌面；测试快捷方式放在测试安装目录内。测试会保留临时文件用于排错，不应将 `-test-setup.exe` 作为发行包分发。不同架构的测试依次执行，因为它们使用同一个测试注册表位置。
