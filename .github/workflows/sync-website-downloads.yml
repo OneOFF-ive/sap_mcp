@@ -29,7 +29,7 @@ jobs:
   sync:
     if: github.repository == 'OneOFF-ive/saplink' && (github.event_name != 'release' || !github.event.release.prerelease)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Check out trusted synchronization script
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -72,7 +72,14 @@ jobs:
             echo 'Official installers already verified on the server; using metadata-only synchronization.'
             PAYLOAD="$METADATA"
           fi
-          ssh "${options[@]}" saplinksync@118.89.185.57 sync < "$PAYLOAD"
+          for attempt in 1 2 3; do
+            if timeout 17m ssh "${options[@]}" saplinksync@118.89.185.57 sync < "$PAYLOAD"; then
+              exit 0
+            fi
+            echo "Synchronization attempt $attempt failed." >&2
+            [ "$attempt" -lt 3 ] && sleep 15
+          done
+          exit 1
 
       - name: Verify public download endpoints
         if: steps.prepare.outputs.ready == 'true'
