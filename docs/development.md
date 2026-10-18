@@ -56,6 +56,8 @@ npm test
 
 在 Windows 项目目录先执行 `npm ci --ignore-scripts`，然后执行 `npm run package:windows`。构建需要 Node.js/npm、Windows 自带的 .NET Framework C# 编译器和 PowerShell 5.1。首次构建需要联网；用户安装生成的包时无需联网。
 
+GUI 启动器使用 .NET Framework 4.7 目标声明、`GuiLauncher.manifest` 的 Windows 10 兼容声明，以及随包复制到 `bin/saplink-gui.exe.config` 的 WinForms `PerMonitorV2` 配置。在创建托盘或菜单窗口前初始化 DPI 感知，旧 Windows API 不支持逐显示器 V2 时回退到系统 DPI，避免高缩放下的位图拉伸。不要只分发 EXE 而遗漏对应配置；DPI 设置属于启动器进程，更新网页无法修复已运行的旧托盘程序。修改后需重新构建安装包并重启托盘程序，验证高缩放菜单及明暗、高对比度主题。
+
 构建会运行测试，下载 `packaging/windows/download-lock.json` 固定 SHA256 的 Node.js、NSIS 和微软 VC 运行库，并验证微软运行库及所选 DLL 的有效微软签名。VC 包只作为 CAB 数据解包，不执行其安装程序，不安装全局组件。发布时更新版本与下载锁，不关闭哈希校验。微软动态下载 URL 如果变更，构建会拒绝新哈希，需显式审核并更新锁文件。
 
 ```powershell

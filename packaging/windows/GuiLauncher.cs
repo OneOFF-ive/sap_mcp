@@ -4,11 +4,40 @@ using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+
+[assembly: TargetFramework(".NETFramework,Version=v4.7")]
+
+internal static class GuiDpi
+{
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetProcessDPIAware();
+
+    internal static void Initialize()
+    {
+        // Run before creating controls, including the tray's hidden message window.
+        try
+        {
+            if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return; // Per-monitor V2.
+            // WinForms configuration or Windows compatibility settings already chose a mode.
+            if (Marshal.GetLastWin32Error() == 5) return;
+        }
+        catch (EntryPointNotFoundException) { }
+        // Older Windows 10 builds still support sharp rendering at the system DPI.
+        SetProcessDPIAware();
+    }
+}
 
 internal static class TrayMenuTheme
 {
@@ -181,6 +210,9 @@ internal static class GuiProgram
     [STAThread]
     private static void Main()
     {
+        Application.EnableVisualStyles();
+        GuiDpi.Initialize();
+        Application.SetCompatibleTextRenderingDefault(false);
         string identity;
         using (var hash = SHA256.Create()) identity = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(Launcher.Root.ToUpperInvariant()))).Replace("-", "");
         bool first;
@@ -190,7 +222,6 @@ internal static class GuiProgram
             if (!first) { reopen.Set(); return; }
             try
             {
-                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new GuiContext(reopen));
             }
             catch { MessageBox.Show("SapLink 无法启动，请修复安装或运行 saplink doctor --json 检查。", "SapLink"); }

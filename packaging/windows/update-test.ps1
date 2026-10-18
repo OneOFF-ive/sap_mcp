@@ -17,8 +17,9 @@ try {
   $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
   & $csc /nologo /target:exe /platform:anycpu "/out:$root\bridge.exe" (Join-Path $PSScriptRoot 'Launcher.cs')
   if ($LASTEXITCODE -ne 0) { throw 'Console launcher compilation failed.' }
-  & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 /define:GUI /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/out:$root\gui.exe" (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GuiLauncher.cs')
+  & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 /define:GUI /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32manifest:$PSScriptRoot\GuiLauncher.manifest" "/out:$root\gui.exe" (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GuiLauncher.cs')
   if ($LASTEXITCODE -ne 0) { throw 'GUI launcher compilation failed.' }
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'GuiLauncher.config') -Destination (Join-Path $root 'gui.exe.config')
   $bridgeScript = Join-Path $root 'update-runner.ps1'
   $bridgePlan = Join-Path $root 'plan.json'
   [IO.File]::WriteAllText($bridgeScript, 'param([string]$Plan) [IO.File]::WriteAllText($Plan + ''.ran'', ''ok'')', $utf8)

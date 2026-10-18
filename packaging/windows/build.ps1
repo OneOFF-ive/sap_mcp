@@ -143,8 +143,9 @@ try {
     $iconName = "saplink-$iconHash.ico"
     & $csc /nologo /target:exe /platform:anycpu /codepage:65001 "/win32icon:$stage\saplink.ico" "/out:$bin\saplink.exe" (Join-Path $PSScriptRoot 'Launcher.cs')
     Assert-Exit 'Console launcher compilation'
-    & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 /define:GUI /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32icon:$stage\saplink.ico" "/out:$bin\saplink-gui.exe" (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GuiLauncher.cs')
+    & $csc /nologo /target:winexe /platform:anycpu /codepage:65001 /define:GUI /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32manifest:$PSScriptRoot\GuiLauncher.manifest" "/win32icon:$stage\saplink.ico" "/out:$bin\saplink-gui.exe" (Join-Path $PSScriptRoot 'Launcher.cs') (Join-Path $PSScriptRoot 'GuiLauncher.cs')
     Assert-Exit 'GUI launcher compilation'
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'GuiLauncher.config') -Destination (Join-Path $bin 'saplink-gui.exe.config')
     # Loading the actual prebuilt addon catches accidental host/target architecture mixing.
     & (Join-Path $runtime 'node.exe') (Join-Path $PSScriptRoot 'native-smoke.cjs') (Join-Path $app 'node_modules\@napi-rs\keyring') $nativeDirectory
     Assert-Exit "Native module smoke check ($arch)"
